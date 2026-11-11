@@ -17,13 +17,13 @@ typedef struct { uint8_t ram[PERSONAL_CAP],previous,dead; } Player;
 typedef struct { int16_t x,y;uint8_t owner,attr,colors[4],pixels[64]; } Part;
 typedef struct { uint8_t valid,seat;uint16_t count,camera;Mm4ProtoBody body;Part parts[PART_CAP]; } Picture;
 typedef struct {
-    char magic[4];uint8_t enabled,initialized,stage,anchor,current,menu,pauser,pending_pause,roster;
+    char magic[4];uint8_t enabled,initialized,stage,anchor,current,menu,pauser,pending_pause,roster,scene_active;
     uint8_t raw[2],raw_previous[2],fresh[2];
     Player player[2];Picture build,frame;
     uint64_t updates[2],world_updates,failures;
 } Coop;
 static Coop C;
-static int s_on,s_roster,s_scope,s_personal_bhv;
+static int s_on,s_roster,s_scope,s_personal_bhv,s_collision;
 static uint16_t s_addr[PERSONAL_CAP],s_index[2048];
 static int s_count;
 typedef struct {const char *id;int enabled;} HookSetting;
@@ -60,7 +60,7 @@ int mm4_coop_read(int seat,uint16_t a) {
 static int world_field(int a) {
     if(a>=0x300 && a<0x5D0)return (a-0x300)%24>=5;
     return (a>=0x100 && a<0x110) || (a>=0x600 && a<0x610) || (a>=0x620 && a<0x630) ||
-        (a>=0x670 && a<0x6c0) || (a>=0x780 && a<0x800) || a==0x19 || a==0x1A;
+        (a>=0x670 && a<0x6c0) || (a>=0x780 && a<0x800) || a==0x19 || a==0x1A || a==0xBF;
 }
 static void snapshot_ram(uint8_t out[2048]) { for(int a=0;a<2048;a++)out[a]=R(a); }
 static void merge_world(const uint8_t before[2048],const uint8_t after[2048]) {
@@ -105,7 +105,7 @@ static int center_camera(void) {
 }
 static int private_step(int seat) {
     int state=personal(&C.player[seat],0x30);
-    if(state>6 || state==5 || C.player[seat].dead)return 1;
+    if(state>6 || state==5 || R(0x30)>=8 || C.player[seat].dead)return 1;
     uint8_t before[2048],after[2048];snapshot_ram(before);
     if(!cyc_mod_isolate_begin())return 0;
     int owner=C.current;C.current=(uint8_t)seat;project(&C.player[seat]);center_camera();
@@ -147,14 +147,61 @@ static int controller(uint16_t address) {
 static int after_controller(uint16_t address) {
     (void)address;if(s_on && C.initialized && !cyc_mod_isolated() && !C.menu) {capture(&C.player[C.anchor]);C.updates[C.anchor]++;}return 0;
 }
+static int other_collision(int seat,int actor) {
+    if(C.player[seat].dead || !(personal(&C.player[seat],0xB0)&31) || !R(0x300+actor) || R(0x30)>=8)return 1;
+    int boss=actor==R(0x146) && (R(0x132)&128) && R(0x450+actor)>0,finisher=0;
+    uint8_t before[2048],after[2048];snapshot_ram(before);
+    if(!cyc_mod_isolate_begin())return 0;
+    int owner=C.current;C.current=(uint8_t)seat;project(&C.player[seat]);
+    s_scope=1;int enabled=hooks(1),ok=enabled;CycModRegs r;cyc_mod_regs(&r);
+    P(0xF5,0x3A);P(0xF6,0x3B);if(ok)ok=cyc_mod_call(0xFF37,&r);
+    r.x=(uint8_t)actor;P(0xEB,actor);s_collision=1;
+    if(ok)ok=cyc_mod_call(0x8097,&r);s_collision=0;
+    if(ok){finisher=boss && !R(0x450+actor);capture(&C.player[seat]);snapshot_ram(after);}
+    if(enabled)hooks(0);s_scope=0;cyc_mod_isolate_end();C.current=(uint8_t)owner;
+    if(ok)merge_world(before,after);
+    if(finisher) {
+        /* The winning seat owns the original victory/weapon-get script.
+         * Keep the live CPU, stack, banks and shared world on their real clock. */
+        capture(&C.player[owner]);C.anchor=C.current=(uint8_t)seat;project(&C.player[seat]);
+        P(0x14,C.fresh[seat]&~0x30);P(0x16,C.raw[seat]&~0x30);P(0x15,0);P(0x17,0);
+    }
+    return ok;
+}
 static int personal_end(uint16_t address) {
     (void)address;
+    /* The common collision tail jumps here. A scoped collision call has
+     * finished; return to its caller before the native actor loop advances. */
+    if(s_collision && cyc_mod_isolated())return 1;
     /* Finish the native loop at its common terrain-hazard check, after slot4.
      * Returning from here would incorrectly omit the player's spike checks. */
     if(s_on && s_scope && s_personal_bhv && R(0xEB)>=4)P(0xEB,23);
+    if(s_on && C.initialized && !C.menu && !cyc_mod_isolated() && R(0xEB)>=5 && R(0xEB)<24)
+        if(!other_collision(C.anchor^1,R(0xEB)))C.failures++;
     return 0;
 }
 static int world_begin(uint16_t address) { (void)address;if(s_on && C.initialized && !cyc_mod_isolated())C.world_updates++;return 0; }
+static int before_horizontal_scroll(uint16_t address) {
+    (void)address;if(s_on && C.initialized && !C.menu && !cyc_mod_isolated())C.scene_active=1;return 0;
+}
+static int after_horizontal_scroll(uint16_t address) {
+    (void)address;
+    if(!s_on || !C.initialized || C.menu || cyc_mod_isolated() || !C.scene_active || R(0x22)>=16)return 0;
+    C.scene_active=0;
+    /* The original 128-frame door script moved the real player and camera.
+     * Bring the partner into that completed destination, retaining inventory. */
+    int seat=C.anchor^1;Player *p=&C.player[seat];
+    if(p->dead || !(personal(p,0xB0)&31))return 0;
+    C.current=C.anchor;capture(&C.player[C.anchor]);
+    for(int base=0x300;base<=0x5B8;base+=24)set_personal(p,base,R(base));
+    for(int a=0x30;a<=0x3F;a++)if(a!=0x3C)set_personal(p,a,R(a));
+    int x=((R(0x348)<<8)|R(0x330))-16;if(x<0)x=0;
+    set_personal(p,0x330,x);set_personal(p,0x348,x>>8);
+    set_personal(p,0x32,0);set_personal(p,0x33,0);set_personal(p,0x35,0);set_personal(p,0x36,0);
+    set_personal(p,0x3C,60);set_personal(p,0x5B8,60);
+    for(int slot=1;slot<5;slot++)set_personal(p,0x300+slot,0);
+    p->previous=C.raw[seat];return 0;
+}
 static int pause_entry(uint16_t address) {
     (void)address;
     if(!s_on || !C.initialized || C.menu || C.pending_pause>1 || cyc_mod_isolated())return 0;
@@ -228,19 +275,19 @@ void mm4_coop_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
         }
     }
 }
-void mm4_coop_power(void) { memset(&C,0,sizeof C);C.pending_pause=255;s_scope=s_personal_bhv=0;addresses(); }
-static const char *const HOOKS[]={"mm4.coop.controller","mm4.coop.after-controller","mm4.coop.personal-end","mm4.coop.world-begin","mm4.coop.pause"};
+void mm4_coop_power(void) { memset(&C,0,sizeof C);C.pending_pause=255;s_scope=s_personal_bhv=s_collision=0;addresses(); }
+static const char *const HOOKS[]={"mm4.coop.controller","mm4.coop.after-controller","mm4.coop.personal-end","mm4.coop.world-begin","mm4.coop.pause","mm4.coop.after-scroll","mm4.coop.before-scroll"};
 void mm4_coop_set(int enabled,int roster) {
     if(enabled)mm4_proto_cancel_swap();
     s_on=enabled!=0;s_roster=roster!=0;C.initialized=0;C.current=C.anchor=0;C.pending_pause=255;
     for(int i=0;i<sizeof HOOKS/sizeof *HOOKS;i++)nes_mod_set_function_hook_enabled(HOOKS[i],s_on);
     nes_mod_set_local_only("MM4 personal co-op (unqualified netplay)",s_on);mm4_view_coop(s_on);
 }
-static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4C2",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
+static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4C4",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
 static int valid(const uint8_t *in,int len) {
     if(!len)return !s_on;if(!in || len!=sizeof C)return 0;
     static Coop p;memcpy(&p,in,sizeof p);
-    if(memcmp(p.magic,"M4C2",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1)return 0;
+    if(memcmp(p.magic,"M4C4",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.scene_active>1)return 0;
     const Picture *f[2]={&p.build,&p.frame};
     for(int i=0;i<2;i++) {
         if(f[i]->valid>1||f[i]->seat>1||f[i]->count>PART_CAP||f[i]->body.pose>=CYC_PROTO_POSE_COUNT||f[i]->body.active>1||f[i]->body.right>1||f[i]->body.flipped>1||f[i]->body.behind>1)return 0;
@@ -257,11 +304,13 @@ void mm4_coop_register(void) {
     addresses();nes_mod_register_function_entry_plugin(HOOKS[0],0x8000,controller);nes_mod_register_function_entry_plugin(HOOKS[1],0xC74D,after_controller);
     nes_mod_register_function_entry_plugin(HOOKS[2],0x8052,personal_end);nes_mod_register_function_entry_plugin(HOOKS[3],0x8003,world_begin);
     nes_mod_register_function_entry_plugin(HOOKS[4],0x9600,pause_entry);
+    nes_mod_register_function_entry_plugin(HOOKS[5],0xCBFC,after_horizontal_scroll);
+    nes_mod_register_function_entry_plugin(HOOKS[6],0xCB68,before_horizontal_scroll);
     nes_mod_register_savestate_hook("mm4.coop",get,set);nes_mod_register_savestate_validator("mm4.coop",valid);
 }
 int mm4_coop_json(char *out,int cap) {
-    return snprintf(out,cap,"\"coop\":{\"on\":%d,\"ready\":%u,\"anchor\":%u,\"menu\":%u,\"pauser\":%u,\"world\":%llu,\"updates\":[%llu,%llu],\"failed\":%llu,\"players\":[[%d,%d,%d,%d,%d],[%d,%d,%d,%d,%d]]}",
+    return snprintf(out,cap,"\"coop\":{\"on\":%d,\"ready\":%u,\"anchor\":%u,\"menu\":%u,\"pauser\":%u,\"world\":%llu,\"updates\":[%llu,%llu],\"failed\":%llu,\"players\":[[%d,%d,%d,%d,%d,%d],[%d,%d,%d,%d,%d,%d]]}",
         s_on,C.initialized,C.anchor,C.menu,C.pauser,(unsigned long long)C.world_updates,(unsigned long long)C.updates[0],(unsigned long long)C.updates[1],(unsigned long long)C.failures,
-        personal(&C.player[0],0x330),personal(&C.player[0],0x378),personal(&C.player[0],0xB0)&31,personal(&C.player[0],0x32),personal(&C.player[0],0x30),
-        personal(&C.player[1],0x330),personal(&C.player[1],0x378),personal(&C.player[1],0xB0)&31,personal(&C.player[1],0x32),personal(&C.player[1],0x30));
+        personal(&C.player[0],0x330),personal(&C.player[0],0x378),personal(&C.player[0],0xB0)&31,personal(&C.player[0],0x32),personal(&C.player[0],0x30),personal(&C.player[0],0x348),
+        personal(&C.player[1],0x330),personal(&C.player[1],0x378),personal(&C.player[1],0xB0)&31,personal(&C.player[1],0x32),personal(&C.player[1],0x30),personal(&C.player[1],0x348));
 }

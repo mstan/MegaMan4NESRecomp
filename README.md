@@ -53,4 +53,12 @@ The check compares native and interpreter execution, decodes terrain against the
 
 The development `--coop on` switch provides separate native player, weapon and helper contexts, guest sprite rendering, and either player's native inventory with input assigned to its owner. `--coop-roster protoman-megaman` reverses the default Mega Man / Proto Man order. Personal actors are slots 0–4; native world actors in slots 5–23 remain shared. Guest weapon artwork is read from cartridge packets without private CHR-RAM uploads.
 
-The first control slice is qualified through independent movement, jump, slide, firing, inventory ownership and current-build continuation. Multiplayer combat, lifecycle, views and online behavior remain in development. Co-op is not yet exposed as a launcher package.
+The control slice is qualified through independent movement, jump, slide, firing, inventory ownership and current-build continuation. Each player's Buster and contact hitbox now use the native collision path against the shared world. Completed native horizontal room transitions bring the partner into the destination while preserving personal equipment. A boss finisher becomes the native player for victory, weapon-get and the following menus.
+
+```text
+python tools/qa_route.py tests/routes/coop-boss.route --frames 6200 --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/coop-boss --extra=--coop --extra=on --extra=--wide --extra=off
+```
+
+The targeted boss route initializes the native pre-boss checkpoint and uses temporary invulnerability, boss health and positioning fixtures. Player two's actual shot must trigger defeat; original scripts handle victory, teleport, weapon-get and stage select. Native/interpreter state, pictures and PCM agree, including a cold continuation during the native door script. These bypasses do not establish full-stage or normal boss-fight coverage.
+
+Enemy targeting, complete guest weapon/shield behavior, death/rejoin/checkpoint lifecycle, all views and online behavior remain in development. Co-op is not yet exposed as a launcher package.

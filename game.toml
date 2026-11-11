@@ -104,3 +104,15 @@ id = "mm4.coop.pause"
 addr = 0x9600
 length = 8
 crc32 = 0x04D53BBC
+
+[[mod_function_hook]]
+id = "mm4.coop.after-scroll"
+addr = 0xCBFC
+length = 8
+crc32 = 0x7511DF43
+
+[[mod_function_hook]]
+id = "mm4.coop.before-scroll"
+addr = 0xCB68
+length = 8
+crc32 = 0x17E25815
