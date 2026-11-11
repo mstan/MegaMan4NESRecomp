@@ -35,7 +35,7 @@ def main():
         cmd=[sys.executable,str(ROOT/'tools/qa_route.py'),str(ROOT/f'tests/routes/{route}.route'),
              '--exe',a.exe,'--rom',a.rom,'--out',str(case),'--frames',str(frames),'--shot-every','800']
         if not paired:cmd.append('--no-interp')
-        for arg in ['--config',str(case/'config.ini'),'--weapon-cycle','on' if on else 'off',
+        for arg in ['--config',str(case/'config.ini'),'--wide','off','--weapon-cycle','on' if on else 'off',
                     '--mm4-controls-log',str(case/'controls.jsonl')]:cmd.append('--extra='+arg)
         with (out/f'{name}.log').open('w') as log:
             subprocess.run(cmd,check=True,stdout=log,stderr=subprocess.STDOUT,env=env)
@@ -61,7 +61,7 @@ def main():
     checks['native_skull_palette']=memory[0x611:0x614]==palette and memory[0x631:0x634]==palette
     cold=out/'cold';cold.mkdir(exist_ok=True)
     cmd=[a.exe,a.rom,'--no-save','--config',str(cold/'config.ini'),'--frames','4920',
-         '--input',str(out/'gallery/input.txt'),'--weapon-cycle','on',
+         '--input',str(out/'gallery/input.txt'),'--wide','off','--weapon-cycle','on',
          '--load-state',str(out/'gallery/held_shoulder.cycstate'),'--hash-out',str(cold/'cold.hash'),
          '--screenshot',str(cold/'final.png'),'--mem-frame','4919','--mem-out',str(cold/'mem.txt')]
     with (cold/'run.log').open('w') as log:subprocess.run(cmd,check=True,stdout=log,stderr=subprocess.STDOUT,env=env)

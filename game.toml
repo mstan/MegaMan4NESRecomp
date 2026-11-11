@@ -62,3 +62,15 @@ id = "mm4.proto.reflected-hits"
 addr = 0x81B2
 length = 8
 crc32 = 0x30CC2C58
+
+[[mod_function_hook]]
+id = "mm4.wide.actor"
+addr = 0xDB72
+length = 8
+crc32 = 0xC1488BF5
+
+[[mod_function_hook]]
+id = "mm4.wide.spawn"
+addr = 0x8000
+length = 8
+crc32 = 0x8D4995CC

@@ -1,5 +1,7 @@
 /* Native MM4 controls; cartridge graphics/tables are read from the loaded ROM. */
 #include "mm4_proto.h"
+#include "mm4_world.h"
+#include "mm4_wide.h"
 #include "cyc_host_extras.h"
 #include "cyc_input.h"
 #include "cyc_ring.h"
@@ -18,12 +20,16 @@ static int s_proto_on,s_proto_mode=1,s_proto_start=1;
 static uint8_t *s_cart;
 static size_t s_cart_size;
 static FILE *s_log;
+static int s_wide;
+static char s_aspect[16]="fit";
 static uint8_t ram(unsigned a) {return cyc_mod_peek((uint16_t)a);}
 static void poke(unsigned a,unsigned v) {cyc_mod_poke((uint16_t)a,(uint8_t)v);}
 static uint8_t prg(unsigned bank,unsigned address) {
     size_t p=(size_t)bank*0x2000+(address&0x1fff);
     return p<s_cart_size?s_cart[p]:0xff;
 }
+unsigned mm4_cart_prg(unsigned bank,unsigned address) {return prg(bank,address);}
+int mm4_cart_ready(void) {return s_cart!=NULL;}
 void mm4_controls_refresh(void) {nes_mod_set_function_hook_enabled("mm4.player.dispatch",s_on || mm4_proto_enabled());}
 static void enabled(int on) {s_on=on!=0;S.pending=S.previous=0;mm4_controls_refresh();}
 
@@ -86,7 +92,7 @@ static void input(void *ctx,uint8_t buttons[2]) {
     S.previous=(uint8_t)held;
 }
 static void power(void *ctx) {
-    (void)ctx;memset(&S,0,sizeof S);mm4_proto_power();
+    (void)ctx;memset(&S,0,sizeof S);mm4_proto_power();mm4_wide_power();
     free(s_cart);s_cart=NULL;s_cart_size=cyc_mod_copy_cart_payload(NULL,0);
     if(s_cart_size==0x80000) {
         s_cart=(uint8_t*)malloc(s_cart_size);
@@ -95,12 +101,21 @@ static void power(void *ctx) {
 }
 static void frame_end(void *ctx) {
     (void)ctx;S.pending=0;mm4_proto_end();
-    char fields[512];mm4_proto_json(fields,sizeof fields);
-    if(s_log)fprintf(s_log,"{\"frame\":%u,\"weapon\":%u,\"held\":%u,\"changes\":%llu,\"hp\":%u,\"state\":%u,\"stage\":%u,\"charge\":%u,%s}\n",
-        cyc_ring_frame,ram(0xa0),S.previous,(unsigned long long)S.changes,ram(0xb0),ram(0x30),ram(0x22),ram(0x35),fields);
+    char fields[512],wide[256];mm4_proto_json(fields,sizeof fields);mm4_wide_json(wide,sizeof wide);
+    if(s_log)fprintf(s_log,"{\"frame\":%u,\"weapon\":%u,\"held\":%u,\"changes\":%llu,\"hp\":%u,\"state\":%u,\"stage\":%u,\"charge\":%u,%s,%s}\n",
+        cyc_ring_frame,ram(0xa0),S.previous,(unsigned long long)S.changes,ram(0xb0),ram(0x30),ram(0x22),ram(0x35),fields,wide);
 }
 static bool option(void *ctx,const char *name,const char *value) {
     (void)ctx;
+    if(!strcmp(name,"--world-audit"))return mm4_world_audit_file(value)!=0;
+    if(!strcmp(name,"--wide")) {
+        if(strcmp(value,"on") && strcmp(value,"off"))return false;
+        s_wide=!strcmp(value,"on");mm4_wide_set(s_wide,s_aspect);return true;
+    }
+    if(!strcmp(name,"--aspect")) {
+        if(strcmp(value,"fit") && strcmp(value,"stock") && strcmp(value,"16-9") && strcmp(value,"21-9") && strcmp(value,"32-9"))return false;
+        snprintf(s_aspect,sizeof s_aspect,"%s",value);mm4_wide_set(s_wide,s_aspect);return true;
+    }
     if(!strcmp(name,"--mm4-controls-log")){s_log=fopen(value,"w");return s_log!=NULL;}
     if(!strcmp(name,"--protoman")) {
         if(strcmp(value,"on") && strcmp(value,"off"))return false;
@@ -122,8 +137,12 @@ static int valid(const uint8_t *in,int len) {
     return !memcmp(next.magic,"M4WC",4) && next.on==s_on && next.previous<=3 && next.pending<=3;
 }
 static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(&S,in,sizeof S);else memset(&S,0,sizeof S);return 1;}
-static void reset(void) {enabled(0);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);}
+static void reset(void) {enabled(0);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);}
 static void activate(void) {enabled(1);}
+static void activate_wide(void) {
+    nes_mod_option_value("mega-man-4-usa.enhancement.widescreen","widescreen","aspect",s_aspect,sizeof s_aspect);
+    s_wide=1;mm4_wide_set(1,s_aspect);
+}
 static void activate_proto(void) {
     char mode[16]="protoman",start[16]="protoman";
     nes_mod_option_value("mega-man-4-usa.character.protoman","protoman","mode",mode,sizeof mode);
@@ -133,12 +152,14 @@ static void activate_proto(void) {
 }
 NES_MOD_CONSTRUCTOR(register_mm4_controls) {
     mm4_proto_register();
+    mm4_wide_register();
     nes_mod_register_function_entry_plugin("mm4.player.dispatch",0x80da,dispatch);
     nes_mod_register_savestate_hook("mm4.controls",get,set);
     nes_mod_register_savestate_validator("mm4.controls",valid);
     nes_mod_register_reset_callback(reset);
     nes_mod_register_activation_plugin("mega-man-4-usa.weapons",activate);
     nes_mod_register_activation_plugin("mega-man-4-usa.protoman",activate_proto);
+    nes_mod_register_activation_plugin("mega-man-4-usa.widescreen",activate_wide);
 }
 const CycHostExtras *cyc_host_extras(void) {
     static const CycInputProfile profile={.id="megaman-weapons-1",.game_label={"Previous weapon (L)","Next weapon (R)"},
@@ -147,8 +168,11 @@ const CycHostExtras *cyc_host_extras(void) {
         {"--mm4-controls-log",true,"FILE: per-frame control state for QA"},
         {"--protoman",true,"on|off: solo Proto Man and Select swapping"},
         {"--proto-mode",true,"protoman|megaman: character traits or reskin"},
-        {"--proto-start",true,"protoman|megaman: solo starting character"}};
+        {"--proto-start",true,"protoman|megaman: solo starting character"},
+        {"--wide",true,"on|off: widen authored terrain and native actors"},
+        {"--aspect",true,"fit|stock|16-9|21-9|32-9: gameplay aspect"},
+        {"--world-audit",true,"FILE: compare decoded terrain to the native viewport"}};
     static const CycHostExtras extras={.power_on=power,.frame_end=frame_end,.input=input,.option=option,
-        .options=options,.option_count=5,.input_profile=&profile};
+        .options=options,.option_count=8,.input_profile=&profile};
     return &extras;
 }

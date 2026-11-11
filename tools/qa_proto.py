@@ -31,7 +31,7 @@ def main():
                '--out', str(case), '--frames', str(frames), '--shot-every', '200']
         if not mode:
             cmd.append('--no-interp')
-        options = ['--config', str(case / 'config.ini'), '--protoman', 'on' if mode else 'off',
+        options = ['--config', str(case / 'config.ini'), '--wide', 'off', '--protoman', 'on' if mode else 'off',
                    '--mm4-controls-log', str(case / 'state.jsonl'),
                    '--present-out', str(case / 'present.png'), '--present-every', '200']
         options += ['--proto-mode', mode] if mode else ['--weapon-cycle', 'off']
@@ -53,7 +53,7 @@ def main():
         cold = case / 'cold'
         cold.mkdir(exist_ok=True)
         cmd = [a.exe, a.rom, '--no-save', '--config', str(cold / 'config.ini'),
-               '--frames', '4520', '--input', str(case / 'input.txt'), '--protoman', 'on',
+               '--frames', '4520', '--input', str(case / 'input.txt'), '--wide', 'off', '--protoman', 'on',
                '--proto-mode', mode, '--load-state', str(case / 'swapping.cycstate'),
                '--hash-out', str(cold / 'cold.hash'), '--present-out', str(cold / 'present.png'),
                '--mem-frame', '4519', '--mem-out', str(cold / 'mem.txt')]

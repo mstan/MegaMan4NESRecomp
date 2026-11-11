@@ -1,0 +1,43 @@
+format_version = 1
+id = "mega-man-4-usa.enhancement.widescreen"
+version = "1.0.0"
+name = "Adaptive Widescreen"
+author = "NESRecomp"
+description = "Extend native terrain and authored actors to the current view. Native menus keep their original pixel grid."
+license = "PolyForm-Noncommercial-1.0.0"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+
+[[target]]
+game_id = "mega-man-4-usa"
+rom_crc32 = "2bc67aa8"
+
+[[feature]]
+id = "widescreen"
+name = "Adaptive Widescreen"
+group = "Display"
+default_enabled = true
+experimental = true
+
+[[plugin]]
+feature = "widescreen"
+id = "mega-man-4-usa.widescreen"
+
+[[option]]
+feature = "widescreen"
+id = "aspect"
+label = "Aspect"
+type = "choice"
+default = "fit"
+[[option.choice]]
+value = "fit"
+label = "Fit to screen"
+[[option.choice]]
+value = "16-9"
+label = "16:9"
+[[option.choice]]
+value = "21-9"
+label = "21:9"
+[[option.choice]]
+value = "32-9"
+label = "32:9"

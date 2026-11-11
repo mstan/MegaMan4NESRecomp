@@ -1,0 +1,4 @@
+INCLUDE boot-play.route
+2400 SAVESTATE gameplay
+2800 SAVESTATE moving
+3900 SAVESTATE late

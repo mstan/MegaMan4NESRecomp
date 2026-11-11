@@ -1,5 +1,7 @@
 /* Replace player-owned OAM with immutable art; CHR-ROM and guest timing stay native. */
 #include "mm4_proto.h"
+#include "mm4_world.h"
+#include "mm4_wide.h"
 #include "cyc_mod.h"
 #include "cyc_render.h"
 #include "mod_function_hooks.h"
@@ -12,18 +14,21 @@ typedef struct {
     Mm4ProtoBody body;
 } ViewFrame;
 static ViewFrame s_build, s_frame;
-static int s_enabled;
+static int s_enabled,s_wide;
 static uint32_t s_bg[256 * 240];
 static uint8_t s_opaque[864 * 240], s_allowed[64][240];
 static uint8_t s_claimed[864 * 240];
 
 static int begin(uint16_t address) {
     (void)address;
+    if(cyc_mod_isolated())return 0;
     memset(&s_build, 0, sizeof s_build); memset(s_build.owners, 255, sizeof s_build.owners);
+    mm4_wide_begin();
     return 0;
 }
 static int part(uint16_t address) {
     (void)address;
+    if(cyc_mod_isolated())return 0;
     CycModRegs r; cyc_mod_regs(&r);
     int slot = ((r.x + 252) & 255) / 4, owner = cyc_mod_peek(0x96);
     s_build.owners[slot] = (uint8_t)owner;
@@ -32,7 +37,9 @@ static int part(uint16_t address) {
 }
 static int dma(uint16_t address) {
     (void)address;
+    if(cyc_mod_isolated())return 0;
     memcpy(&s_frame, &s_build, sizeof s_frame);
+    mm4_wide_latch();
     return 0;
 }
 static uint32_t color(int index, const Mm4ProtoBody *body) {
@@ -47,6 +54,40 @@ static uint32_t color(int index, const Mm4ProtoBody *body) {
     if (body->palette[1] == 0x0F && body->palette[2] == 0x0F && body->palette[3] == 0x0F)
         return 0xFF000000u;
     return c;
+}
+static uint32_t menu_color(uint32_t c) {
+    uint32_t light=cyc_render_color(1),white=cyc_render_color_value(0x30),out=0xff000000u;
+    for(int shift=0;shift<=16;shift+=8) {
+        unsigned value=(c>>shift)&255,level=(light>>shift)&255,full=(white>>shift)&255;
+        value=full?value*level/full:0;if(value>255)value=255;out|=value<<shift;
+    }
+    return out;
+}
+static int inventory(uint32_t *out,int W,int H,const uint32_t *native) {
+    const CycProtoAtlas *atlas=mm4_proto_atlas();
+    if(!s_enabled || !mm4_proto_selected() || !atlas || W<256 || H!=240 || !native)return 0;
+    int origin=(W-256)/2;
+    for(int i=0;i<W*H;i++)out[i]=0xff000000u;
+    for(int y=0;y<H;y++)memcpy(out+y*W+origin,native+y*256,256*sizeof *out);
+    /* Native life icon: two adjacent 8x16 parts at184,192 (9E51 OAM). */
+    for(int y=0;y<16;y++)for(int x=0;x<16;x++) {
+        uint32_t c=atlas->portrait[y*16+x];
+        out[(192+y)*W+origin+184+x]=c?menu_color(c):0xff000000u;
+    }
+    int cursor=cyc_mod_peek(0x138),weapon=cursor<16?mm4_cart_prg(0x3c,0x9b71+cursor):255;
+    /* Keep Rush Coil/Marine/Jet, Wire and Balloon's original previews. */
+    if(weapon==0 || weapon==4 || (weapon>=7 && weapon<=13)) {
+        const CycProtoPose *p=&atlas->poses[CYC_PROTO_IDLE0];
+        Mm4ProtoBody b={0};b.weapon=(uint8_t)(weapon!=0);
+        for(int i=0;i<8;i++)b.palette[i]=cyc_mod_peek(0x610+i);
+        for(int y=178;y<218;y++)for(int x=108;x<148;x++)out[y*W+origin+x]=0xff000000u;
+        for(int y=0;y<p->height;y++)for(int x=0;x<p->width;x++) {
+            int index=p->pixels[y*32+x];if(!index)continue;
+            int px=128+x-p->origin_x,py=200+p->top_y+y;
+            out[py*W+origin+px]=menu_color(color(index,&b));
+        }
+    }
+    cyc_render_set_native_origin(origin);return 1;
 }
 static void character_body(uint32_t *out, int W, int origin, const Mm4ProtoBody *b) {
     const CycProtoAtlas *atlas = mm4_proto_atlas();
@@ -88,15 +129,20 @@ static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oa
 }
 static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *native, void *ctx) {
     (void)ctx; (void)native_x0;
+    if(cyc_mod_peek(0x22)==16)return inventory(out,W,H,native);
     if (cyc_mod_peek(0x22) >= 16 || cyc_mod_peek(0x19) || cyc_mod_peek(0x1A)) return 0;
-    if (!s_enabled || W < 256 || W > 864 || H != 240 || !cyc_render_background(s_bg)) return 0;
+    if (!(s_enabled || s_wide) || W < 256 || W > 864 || H != 240 || !cyc_render_background(s_bg)) return 0;
+    mm4_world_audit(s_bg);
     int origin = (W - 256) / 2;
     int replace = s_enabled && s_frame.valid && s_frame.body.active;
+    memset(s_opaque, 0, sizeof s_opaque);
+    int wide=mm4_wide_background(out,W,H,s_bg,s_opaque,&origin);
     {
-        if (!replace) return 0;
-        memset(s_opaque, 0, sizeof s_opaque);
-        for (int i = 0; i < W * H; ++i) out[i] = 0xFF000000u;
-        for (int y = 0; y < H; ++y) memcpy(out + y * W + origin, s_bg + y * 256, 256 * sizeof *out);
+        if (!replace && !wide) return 0;
+        if(!wide) {
+            for (int i = 0; i < W * H; ++i) out[i] = 0xFF000000u;
+            for (int y = 0; y < H; ++y) memcpy(out + y * W + origin, s_bg + y * 256, 256 * sizeof *out);
+        }
     }
     const uint8_t *native_opaque = cyc_frame_bg_opaque();
     for (int y = 0; y < H; ++y) for (int x = 0; x < 256; ++x)
@@ -114,11 +160,15 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
     memset(s_claimed, 0, (size_t)W * H);
     /* An opaque higher-priority sprite claims its pixel even behind terrain.
      * Otherwise a lower-priority foreground sprite can leak through it. */
+    int drawn_rank=0;
     for (int slot = 0; slot < 64; ++slot) {
         int owner = s_frame.owners[slot];
+        int rank=mm4_wide_rank(owner);
+        if(rank!=255)while(drawn_rank<rank)mm4_wide_draw(out,W,origin,s_opaque,s_claimed,++drawn_rank);
         if (replace && owner == 0) { if (slot == first) character_body(out, W, origin, &s_frame.body); }
         else sprite(out, W, origin, slot, oam);
     }
+    while(drawn_rank<24)mm4_wide_draw(out,W,origin,s_opaque,s_claimed,++drawn_rank);
     cyc_render_set_native_origin(origin); return 1;
 }
 void mm4_view_power(void) {
@@ -126,15 +176,16 @@ void mm4_view_power(void) {
     memset(&s_frame, 0, sizeof s_frame); memset(s_frame.owners, 255, sizeof s_frame.owners);
 }
 static void refresh(void) {
-    int active = s_enabled;
+    int active = s_enabled || s_wide;
     nes_mod_set_function_hook_enabled("mm4.view.begin", active);
     nes_mod_set_function_hook_enabled("mm4.view.part", active);
     nes_mod_set_function_hook_enabled("mm4.view.dma", active);
     cyc_render_set_compositor(active ? render : NULL, NULL);
-    cyc_render_set_stock_compositing(s_enabled != 0);
+    cyc_render_set_stock_compositing(active != 0);
     cyc_render_capture_background(active != 0);
 }
 void mm4_view_enable(int enabled) { s_enabled = enabled != 0; refresh(); }
+void mm4_view_wide(int enabled) {s_wide=enabled!=0;refresh();}
 static int get(uint8_t *out, int cap) {
     if (cap < sizeof s_frame + sizeof s_build) return -1;
     memcpy(s_build.magic, "MV01", 4); memcpy(s_frame.magic, "MV01", 4);
@@ -142,7 +193,7 @@ static int get(uint8_t *out, int cap) {
     return sizeof s_build + sizeof s_frame;
 }
 static int valid(const uint8_t *in, int len) {
-    if (!len) return !(s_enabled);
+    if (!len) return !(s_enabled || s_wide);
     if (!in || len != sizeof s_build + sizeof s_frame) return 0;
     ViewFrame frames[2]; memcpy(frames, in, sizeof frames);
     for (int i = 0; i < 2; ++i) {

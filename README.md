@@ -37,4 +37,14 @@ Proto Man mode supplies two uncharged shots, double incoming damage with native 
 python tools/qa_proto.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/proto
 ```
 
-This development slice covers solo play. Menu portraits, adaptive world rendering, multiplayer and full-stage qualification are still in progress; online play is unavailable while this character implementation remains unqualified for netplay.
+The native inventory supplies Proto Man's life portrait and character preview on its original pixel grid. Rush and adapter previews retain their native graphics. This development slice covers solo play; multiplayer and full-stage qualification are still in progress.
+
+## Adaptive widescreen
+
+Fresh profiles enable Fit to screen. The aspect option also offers 16:9, 21:9 and 32:9. Horizontal rooms extend their authored terrain and native actors into the margins, with native slot identities, animation and collision. Original viewport pixels and the inventory's layout remain intact. Vertical scenes and transitions still need full-stage qualification.
+
+```text
+python tools/qa_wide.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/wide
+```
+
+The check compares native and interpreter execution, decodes terrain against the live viewport, checks native margin activation, and cold-loads a moving scene with a different capture schedule. It records the original game's brief right-edge palette-attribute streaming differences separately. Online play remains unavailable while the widened world and character implementation are unqualified for netplay.
