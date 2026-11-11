@@ -1,0 +1,51 @@
+format_version = 1
+id = "mega-man-4-usa.character.protoman"
+version = "1.0.0"
+name = "Proto Man"
+author = "NESRecomp; sprite sheet: Mister Man"
+description = "Play as Proto Man with native Mega Man 4 slide, charged shots, weapons and helpers. Select swaps characters in solo play. Character artwork is included and credited."
+license = "PolyForm-Noncommercial-1.0.0 (code); third-party artwork credited in assets/CREDITS.txt"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+
+[[target]]
+game_id = "mega-man-4-usa"
+rom_crc32 = "2bc67aa8"
+
+[[feature]]
+id = "protoman"
+name = "Proto Man"
+group = "Gameplay"
+default_enabled = false
+experimental = true
+
+[[plugin]]
+feature = "protoman"
+id = "mega-man-4-usa.protoman"
+
+[[option]]
+feature = "protoman"
+id = "start"
+label = "Starting character"
+type = "choice"
+default = "protoman"
+[[option.choice]]
+value = "protoman"
+label = "Proto Man"
+[[option.choice]]
+value = "megaman"
+label = "Mega Man"
+
+[[option]]
+feature = "protoman"
+id = "mode"
+label = "Character behavior"
+description = "Proto Man mode combines double incoming damage, a jumping projectile shield and two uncharged shots. Native slide and charge remain available in both modes."
+type = "choice"
+default = "protoman"
+[[option.choice]]
+value = "protoman"
+label = "Proto Man mode"
+[[option.choice]]
+value = "megaman"
+label = "Mega Man behavior (reskin)"

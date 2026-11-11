@@ -8,3 +8,57 @@ id = "mm4.player.dispatch"
 addr = 0x80DA
 length = 8
 crc32 = 0xB0459365
+
+[[mod_function_hook]]
+id = "mm4.proto.shot"
+addr = 0x8D5C
+length = 8
+crc32 = 0x62FB83BC
+
+[[mod_function_hook]]
+id = "mm4.proto.muzzle"
+addr = 0x8DC3
+length = 8
+crc32 = 0x9DDC5E9F
+
+[[mod_function_hook]]
+id = "mm4.proto.damage"
+addr = 0x81E4
+length = 8
+crc32 = 0xAA5B98B2
+
+[[mod_function_hook]]
+id = "mm4.view.begin"
+addr = 0xDB3A
+length = 8
+crc32 = 0xC227E028
+
+[[mod_function_hook]]
+id = "mm4.view.part"
+addr = 0xDE39
+length = 8
+crc32 = 0x27504D04
+
+[[mod_function_hook]]
+id = "mm4.view.dma"
+addr = 0xC065
+length = 8
+crc32 = 0x0184F5FB
+
+[[mod_function_hook]]
+id = "mm4.proto.shield"
+addr = 0x81CC
+length = 8
+crc32 = 0x3C673861
+
+[[mod_function_hook]]
+id = "mm4.proto.skip-reflected"
+addr = 0xFA47
+length = 8
+crc32 = 0xA78CB0CE
+
+[[mod_function_hook]]
+id = "mm4.proto.reflected-hits"
+addr = 0x81B2
+length = 8
+crc32 = 0x30CC2C58

@@ -1,0 +1,6 @@
+static const unsigned char MM4_PROTO_PNG[] = {
+@MM4_PROTO_PNG_BYTES@
+};
+static const unsigned char MM4_PROTO_JUMP_PNG[] = {
+@MM4_PROTO_JUMP_PNG_BYTES@
+};

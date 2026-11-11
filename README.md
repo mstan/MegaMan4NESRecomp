@@ -26,3 +26,15 @@ python tools/qa_controls.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/
 ```
 
 The check exercises acquired, locked and empty equipment, native/interpreter execution, graphics/palettes, held and simultaneous inputs, player isolation and current-build held-input continuation.
+
+## Proto Man
+
+Enable the optional Proto Man package in Mods. Its starting-character setting chooses Mega Man or Proto Man. Select swaps characters with a 32-frame teleport, preserves HP and equipment, cancels charge, and protects the player during the beam animation. Native slide, charge, weapon and helper mechanics remain available to both characters.
+
+Proto Man mode supplies two uncharged shots, double incoming damage with native recoil, and a front airborne shield for supported small bullets. Reflected shots use native Buster damage independently of the selected weapon. The behavior setting also offers a reskin with Mega Man's stats. Included artwork is credited in the package's `assets/CREDITS.txt`.
+
+```text
+python tools/qa_proto.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/proto
+```
+
+This development slice covers solo play. Menu portraits, adaptive world rendering, multiplayer and full-stage qualification are still in progress; online play is unavailable while this character implementation remains unqualified for netplay.
