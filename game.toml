@@ -1,0 +1,10 @@
+[game]
+name = "Mega Man 4"
+output_prefix = "mega-man-4"
+console = "nes"
+
+[[mod_function_hook]]
+id = "mm4.player.dispatch"
+addr = 0x80DA
+length = 8
+crc32 = 0xB0459365
