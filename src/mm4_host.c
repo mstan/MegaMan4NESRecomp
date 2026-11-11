@@ -2,9 +2,11 @@
 #include "mm4_proto.h"
 #include "mm4_world.h"
 #include "mm4_wide.h"
+#include "mm4_coop.h"
 #include "cyc_host_extras.h"
 #include "cyc_input.h"
 #include "cyc_ring.h"
+#include "cyc_render.h"
 #include "cyc_mod.h"
 #include "logical_input.h"
 #include "mod_runtime.h"
@@ -14,9 +16,11 @@
 #include <string.h>
 
 typedef struct { char magic[4]; uint8_t on,previous,pending,reserved; uint64_t changes; } Controls;
-static Controls S;
+static Controls s_players[2];
+#define S (s_players[mm4_coop_seat()])
 static int s_on;
 static int s_proto_on,s_proto_mode=1,s_proto_start=1;
+static int s_coop,s_roster;
 static uint8_t *s_cart;
 static size_t s_cart_size;
 static FILE *s_log;
@@ -31,7 +35,7 @@ static uint8_t prg(unsigned bank,unsigned address) {
 unsigned mm4_cart_prg(unsigned bank,unsigned address) {return prg(bank,address);}
 int mm4_cart_ready(void) {return s_cart!=NULL;}
 void mm4_controls_refresh(void) {nes_mod_set_function_hook_enabled("mm4.player.dispatch",s_on || mm4_proto_enabled());}
-static void enabled(int on) {s_on=on!=0;S.pending=S.previous=0;mm4_controls_refresh();}
+static void enabled(int on) {s_on=on!=0;for(int i=0;i<2;i++)s_players[i].pending=s_players[i].previous=0;mm4_controls_refresh();}
 
 /* Native DA05's graphics packets contain bank, page count, source page and
  * destination PPU page. Decode the same user-owned bytes without executing
@@ -54,7 +58,7 @@ static int graphics(int weapon,int commit) {
         size_t source=(size_t)bank*0x2000+(from-0x80u)*0x100u;
         size_t destination=(size_t)to*0x100u,count=(size_t)pages*256;
         if(!pages || from<0x80 || from>=0xc0 || source+count>s_cart_size || destination+count>0x2000)return 0;
-        if(commit)for(size_t i=0;i<count;i++)if(!cyc_mod_chr_poke((uint16_t)(destination+i),s_cart[source+i]))return 0;
+        if(commit && !cyc_mod_isolated())for(size_t i=0;i<count;i++)if(!cyc_mod_chr_poke((uint16_t)(destination+i),s_cart[source+i]))return 0;
     }
     return 0;
 }
@@ -64,7 +68,24 @@ static int safe(void) {
         (state==0 || state==1 || state==3 || state==4) &&
         !(ram(0x19)|ram(0x1a)|ram(0x13a)|ram(0x13c)|ram(0x13d));
 }
-static int dispatch(uint16_t address) {
+int mm4_controls_art(int weapon) {return weapon>=0 && weapon<=13 && graphics(weapon,0) && graphics(weapon,1);}
+int mm4_controls_pattern(int weapon,unsigned address) {
+    if(weapon<0 || weapon>13 || !s_cart)return cyc_render_chr((uint16_t)address);
+    unsigned selector=0x30u+(unsigned)weapon;
+    unsigned pointer=prg(0x28,0xb800+selector)|(unsigned)prg(0x28,0xb870+selector)<<8;
+    if(pointer<0xa000 || pointer>=0xc000)return cyc_render_chr((uint16_t)address);
+    unsigned cursor=prg(0x28,pointer)<0x80?8:1;
+    for(unsigned packets=0;packets<32;packets++,cursor+=4) {
+        if(cursor+3>=256 || pointer+cursor+3>=0xc000)break;
+        unsigned bank=prg(0x28,pointer+cursor);if(bank>=0x80)break;
+        unsigned pages=prg(0x28,pointer+cursor+1),from=prg(0x28,pointer+cursor+2),to=prg(0x28,pointer+cursor+3);
+        size_t start=to*256u,count=pages*256u,source=(size_t)bank*8192+(from-0x80u)*256u;
+        if(from>=0x80 && from<0xc0 && source+count<=s_cart_size && address>=start && address-start<count)
+            return s_cart[source+address-start];
+    }
+    return cyc_render_chr((uint16_t)address);
+}
+int mm4_controls_dispatch(uint16_t address) {
     (void)address;
     if(mm4_proto_dispatch()) {S.pending=0;return 1;}
     unsigned fresh=S.pending;S.pending=0;
@@ -86,13 +107,17 @@ static int dispatch(uint16_t address) {
     return 0;
 }
 static void input(void *ctx,uint8_t buttons[2]) {
-    (void)ctx;(void)buttons;
-    unsigned held=nes_input_game_buttons(1)&(CYC_GAME_L|CYC_GAME_R);
-    S.pending=(uint8_t)(s_on && held!=(CYC_GAME_L|CYC_GAME_R)?held&~S.previous:0);
-    S.previous=(uint8_t)held;
+    (void)ctx;
+    for(int seat=0;seat<2;seat++) {
+        Controls *state=&s_players[seat];
+        unsigned held=seat && !mm4_coop_enabled()?0:nes_input_game_buttons(seat+1)&(CYC_GAME_L|CYC_GAME_R);
+        state->pending=(uint8_t)(s_on && held!=(CYC_GAME_L|CYC_GAME_R)?held&~state->previous:0);
+        state->previous=(uint8_t)held;
+    }
+    mm4_coop_input(buttons);
 }
 static void power(void *ctx) {
-    (void)ctx;memset(&S,0,sizeof S);mm4_proto_power();mm4_wide_power();
+    (void)ctx;memset(s_players,0,sizeof s_players);mm4_coop_power();mm4_proto_power();mm4_wide_power();
     free(s_cart);s_cart=NULL;s_cart_size=cyc_mod_copy_cart_payload(NULL,0);
     if(s_cart_size==0x80000) {
         s_cart=(uint8_t*)malloc(s_cart_size);
@@ -100,13 +125,24 @@ static void power(void *ctx) {
     }
 }
 static void frame_end(void *ctx) {
-    (void)ctx;S.pending=0;mm4_proto_end();
-    char fields[512],wide[256];mm4_proto_json(fields,sizeof fields);mm4_wide_json(wide,sizeof wide);
-    if(s_log)fprintf(s_log,"{\"frame\":%u,\"weapon\":%u,\"held\":%u,\"changes\":%llu,\"hp\":%u,\"state\":%u,\"stage\":%u,\"charge\":%u,%s,%s}\n",
-        cyc_ring_frame,ram(0xa0),S.previous,(unsigned long long)S.changes,ram(0xb0),ram(0x30),ram(0x22),ram(0x35),fields,wide);
+    (void)ctx;for(int i=0;i<2;i++)s_players[i].pending=0;mm4_proto_end();mm4_coop_end();
+    char fields[512],wide[256],coop[512];mm4_proto_json(fields,sizeof fields);mm4_wide_json(wide,sizeof wide);mm4_coop_json(coop,sizeof coop);
+    if(s_log)fprintf(s_log,"{\"frame\":%u,\"weapon\":%u,\"held\":%u,\"changes\":%llu,\"hp\":%u,\"state\":%u,\"stage\":%u,\"charge\":%u,%s,%s,%s}\n",
+        cyc_ring_frame,ram(0xa0),S.previous,(unsigned long long)S.changes,ram(0xb0),ram(0x30),ram(0x22),ram(0x35),fields,wide,coop);
 }
 static bool option(void *ctx,const char *name,const char *value) {
     (void)ctx;
+    if(!strcmp(name,"--coop") || !strcmp(name,"--coop-roster")) {
+        if(!strcmp(name,"--coop")) {
+            if(strcmp(value,"on") && strcmp(value,"off"))return false;
+            s_coop=!strcmp(value,"on");
+        } else {
+            if(strcmp(value,"megaman-protoman") && strcmp(value,"protoman-megaman"))return false;
+            s_roster=!strcmp(value,"protoman-megaman");
+        }
+        if(!mm4_proto_set(s_proto_on || s_coop,s_proto_mode,s_proto_start))return false;
+        mm4_coop_set(s_coop,s_roster);return true;
+    }
     if(!strcmp(name,"--world-audit"))return mm4_world_audit_file(value)!=0;
     if(!strcmp(name,"--wide")) {
         if(strcmp(value,"on") && strcmp(value,"off"))return false;
@@ -119,25 +155,30 @@ static bool option(void *ctx,const char *name,const char *value) {
     if(!strcmp(name,"--mm4-controls-log")){s_log=fopen(value,"w");return s_log!=NULL;}
     if(!strcmp(name,"--protoman")) {
         if(strcmp(value,"on") && strcmp(value,"off"))return false;
-        s_proto_on=!strcmp(value,"on");return mm4_proto_set(s_proto_on,s_proto_mode,s_proto_start);
+        s_proto_on=!strcmp(value,"on");return mm4_proto_set(s_proto_on || s_coop,s_proto_mode,s_proto_start);
     }
     if(!strcmp(name,"--proto-mode") || !strcmp(name,"--proto-start")) {
         if(strcmp(value,"protoman") && strcmp(value,"megaman"))return false;
         if(!strcmp(name,"--proto-mode"))s_proto_mode=!strcmp(value,"protoman");else s_proto_start=!strcmp(value,"protoman");
-        return mm4_proto_set(s_proto_on,s_proto_mode,s_proto_start);
+        return mm4_proto_set(s_proto_on || s_coop,s_proto_mode,s_proto_start);
     }
     if(strcmp(name,"--weapon-cycle") || (strcmp(value,"on") && strcmp(value,"off")))return false;
     enabled(!strcmp(value,"on"));return true;
 }
-static int get(uint8_t *out,int cap) {if(cap<(int)sizeof S)return -1;memcpy(S.magic,"M4WC",4);S.on=(uint8_t)s_on;memcpy(out,&S,sizeof S);return sizeof S;}
+static int get(uint8_t *out,int cap) {
+    if(cap<(int)sizeof s_players)return -1;
+    for(int i=0;i<2;i++){memcpy(s_players[i].magic,"M4W2",4);s_players[i].on=(uint8_t)s_on;}
+    memcpy(out,s_players,sizeof s_players);return sizeof s_players;
+}
 static int valid(const uint8_t *in,int len) {
     if(!len)return !s_on;
-    if(!in || len!=sizeof S)return 0;
-    Controls next;memcpy(&next,in,sizeof next);
-    return !memcmp(next.magic,"M4WC",4) && next.on==s_on && next.previous<=3 && next.pending<=3;
+    if(!in || len!=sizeof s_players)return 0;
+    Controls next[2];memcpy(next,in,sizeof next);
+    for(int i=0;i<2;i++)if(memcmp(next[i].magic,"M4W2",4) || next[i].on!=s_on || next[i].previous>3 || next[i].pending>3)return 0;
+    return 1;
 }
-static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(&S,in,sizeof S);else memset(&S,0,sizeof S);return 1;}
-static void reset(void) {enabled(0);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);}
+static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(s_players,in,sizeof s_players);else memset(s_players,0,sizeof s_players);return 1;}
+static void reset(void) {enabled(0);s_coop=0;mm4_coop_set(0,s_roster);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);}
 static void activate(void) {enabled(1);}
 static void activate_wide(void) {
     nes_mod_option_value("mega-man-4-usa.enhancement.widescreen","widescreen","aspect",s_aspect,sizeof s_aspect);
@@ -153,7 +194,8 @@ static void activate_proto(void) {
 NES_MOD_CONSTRUCTOR(register_mm4_controls) {
     mm4_proto_register();
     mm4_wide_register();
-    nes_mod_register_function_entry_plugin("mm4.player.dispatch",0x80da,dispatch);
+    mm4_coop_register();
+    nes_mod_register_function_entry_plugin("mm4.player.dispatch",0x80da,mm4_controls_dispatch);
     nes_mod_register_savestate_hook("mm4.controls",get,set);
     nes_mod_register_savestate_validator("mm4.controls",valid);
     nes_mod_register_reset_callback(reset);
@@ -171,8 +213,10 @@ const CycHostExtras *cyc_host_extras(void) {
         {"--proto-start",true,"protoman|megaman: solo starting character"},
         {"--wide",true,"on|off: widen authored terrain and native actors"},
         {"--aspect",true,"fit|stock|16-9|21-9|32-9: gameplay aspect"},
-        {"--world-audit",true,"FILE: compare decoded terrain to the native viewport"}};
+        {"--world-audit",true,"FILE: compare decoded terrain to the native viewport"},
+        {"--coop",true,"on|off: development native personal co-op"},
+        {"--coop-roster",true,"megaman-protoman|protoman-megaman: player order"}};
     static const CycHostExtras extras={.power_on=power,.frame_end=frame_end,.input=input,.option=option,
-        .options=options,.option_count=8,.input_profile=&profile};
+        .options=options,.option_count=10,.input_profile=&profile};
     return &extras;
 }

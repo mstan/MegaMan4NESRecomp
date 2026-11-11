@@ -23,3 +23,4 @@ void mm4_view_enable(int enabled);
 int mm4_proto_dispatch(void);
 int mm4_proto_enabled(void);
 void mm4_controls_refresh(void);
+void mm4_proto_cancel_swap(void);

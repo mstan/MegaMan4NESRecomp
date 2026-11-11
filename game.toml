@@ -74,3 +74,33 @@ id = "mm4.wide.spawn"
 addr = 0x8000
 length = 8
 crc32 = 0x8D4995CC
+
+[[mod_function_hook]]
+id = "mm4.coop.controller"
+addr = 0x8000
+length = 8
+crc32 = 0xB35351D2
+
+[[mod_function_hook]]
+id = "mm4.coop.after-controller"
+addr = 0xC74D
+length = 8
+crc32 = 0x469F857A
+
+[[mod_function_hook]]
+id = "mm4.coop.personal-end"
+addr = 0x8052
+length = 8
+crc32 = 0xD8D0ED3B
+
+[[mod_function_hook]]
+id = "mm4.coop.world-begin"
+addr = 0x8003
+length = 8
+crc32 = 0x0EBCEA2E
+
+[[mod_function_hook]]
+id = "mm4.coop.pause"
+addr = 0x9600
+length = 8
+crc32 = 0x04D53BBC

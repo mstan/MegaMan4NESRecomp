@@ -1,5 +1,6 @@
 /* Native MM4 movement, charge, slide, recoil and death scripts remain in charge. */
 #include "mm4_proto.h"
+#include "mm4_coop.h"
 #include "mm4_proto_sheet.h"
 #include "cyc_mod.h"
 #include "cyc_ring.h"
@@ -20,7 +21,8 @@ typedef struct {
     uint8_t enabled,mode,selected,teleport,saved_stun,saved_invincible,reflected[3];
     uint64_t switches,limited,blocks,reflections,hits;
 } ProtoState;
-static ProtoState S;
+static ProtoState s_players[2];
+#define S (s_players[mm4_coop_seat()])
 static uint8_t prg(int bank,int address) {
     size_t at=(size_t)bank*0x2000+(address&0x1fff);
     return at<s_size?s_cart[at]:0xff;
@@ -34,9 +36,9 @@ static int drawn_frame(void) {
     return prg(bank-(pointer<0xa000),pointer+2+(R(0x540)&127));
 }
 int mm4_proto_enabled(void) {return s_on;}
-int mm4_proto_selected(void) {return s_on && S.selected;}
-int mm4_proto_swapping(void) {return s_on && S.teleport;}
-int mm4_proto_active(void) {return s_on && (S.selected || S.teleport);}
+int mm4_proto_selected(void) {int character=mm4_coop_character();return s_on && (character>=0?character:S.selected);}
+int mm4_proto_swapping(void) {return s_on && !mm4_coop_enabled() && S.teleport;}
+int mm4_proto_active(void) {return mm4_proto_selected() || mm4_proto_swapping();}
 const CycProtoAtlas *mm4_proto_atlas(void) {return s_loaded?&s_atlas:NULL;}
 static int safe(void) {
     int state=R(0x30);
@@ -54,7 +56,7 @@ static int shield_up(void) {
         !R(0x32) && !(R(0x19)|R(0x1a)|R(0xad)|R(0x133)) && !R(0x390);
 }
 int mm4_proto_dispatch(void) {
-    if(!s_on || cyc_mod_isolated())return 0;
+    if(!s_on || mm4_coop_enabled() || cyc_mod_isolated())return 0;
     if(!S.teleport && (R(0x14)&0x20) && safe()) {
         S.teleport=1;S.saved_stun=R(0x5b8);S.switches++;
         S.saved_invincible=R(0x3c);
@@ -69,7 +71,7 @@ static int shot(uint16_t address) {
     (void)address;
     CycModRegs r;cyc_mod_regs(&r);
     if(r.y>=1 && r.y<=3)S.reflected[r.y-1]=0;
-    if(!mm4_proto_selected() || !s_mode || cyc_mod_isolated() || R(0x11)!=0x18)return 0;
+    if(!mm4_proto_selected() || !s_mode || (cyc_mod_isolated() && !mm4_coop_native_scope()) || R(0x11)!=0x18)return 0;
     int count=0;
     for(int slot=1;slot<=3;slot++)count+=R(0x300+slot)==2 && R(0x558+slot)==0x18 && !S.reflected[slot-1];
     if(count<2)return 0;
@@ -77,7 +79,7 @@ static int shot(uint16_t address) {
 }
 static int muzzle(uint16_t address) {
     (void)address;
-    if(!mm4_proto_selected() || cyc_mod_isolated())return 0;
+    if(!mm4_proto_selected() || (cyc_mod_isolated() && !mm4_coop_native_scope()))return 0;
     CycModRegs r;cyc_mod_regs(&r);
     int state=R(0x30),offset=state==1?-5:state==3?-4:3;
     if(state==0 && R(0x558)-R(0x33)==4 && (R(0x540)&3)==1)offset--;
@@ -87,7 +89,7 @@ static int muzzle(uint16_t address) {
 }
 static int damage(uint16_t address) {
     (void)address;
-    if(!mm4_proto_selected() || !s_mode || S.teleport || cyc_mod_isolated())return 0;
+    if(!mm4_proto_selected() || !s_mode || S.teleport || (cyc_mod_isolated() && !mm4_coop_native_scope()))return 0;
     CycModRegs r;cyc_mod_regs(&r);
     int amount=R(0x8413+r.y);
     /* SEC has run and A is the masked unit count, not bit-7 ownership.
@@ -211,7 +213,7 @@ void mm4_proto_body(Mm4ProtoBody *b) {
     else b->pose=(uint8_t)(throwing?CYC_PROTO_THROW_IDLE:firing?CYC_PROTO_FIRE_IDLE0:CYC_PROTO_IDLE0+((R(0x94)>>3)&3));
 }
 void mm4_proto_power(void) {
-    memset(&S,0,sizeof S);S.selected=(uint8_t)s_start;
+    memset(s_players,0,sizeof s_players);for(int i=0;i<2;i++)s_players[i].selected=(uint8_t)s_start;
     free(s_cart);s_cart=NULL;s_size=cyc_mod_copy_cart_payload(NULL,0);
     if(s_size==0x80000) {
         s_cart=(uint8_t*)malloc(s_size);
@@ -220,10 +222,15 @@ void mm4_proto_power(void) {
     mm4_view_power();
 }
 void mm4_proto_end(void) {
-    for(int slot=1;slot<=3;slot++)if(R(0x300+slot)!=2)S.reflected[slot-1]=0;
+    for(int seat=0;seat<(mm4_coop_enabled()?2:1);seat++)for(int slot=1;slot<=3;slot++)
+        if(mm4_coop_read(seat,0x300+slot)!=2)s_players[seat].reflected[slot-1]=0;
+    if(mm4_coop_enabled())return;
     if(!s_on || !S.teleport)return;
     if(S.teleport==16){S.selected^=1;sound(0x33);}
     if(++S.teleport>32){S.teleport=0;P(0x5b8,S.saved_stun);P(0x3c,S.saved_invincible);}
+}
+void mm4_proto_cancel_swap(void) {
+    if(S.teleport){P(0x5b8,S.saved_stun);P(0x3c,S.saved_invincible);S.teleport=0;}
 }
 bool mm4_proto_set(int enabled,int mode,int start) {
     if(enabled && !s_loaded) {
@@ -247,18 +254,19 @@ bool mm4_proto_set(int enabled,int mode,int start) {
     mm4_controls_refresh();mm4_view_enable(s_on);return true;
 }
 static int get(uint8_t *out,int cap) {
-    if(cap<sizeof S)return -1;
-    memcpy(S.magic,"M4P2",4);S.enabled=(uint8_t)s_on;S.mode=(uint8_t)s_mode;
-    memcpy(out,&S,sizeof S);return sizeof S;
+    if(cap<sizeof s_players)return -1;
+    for(int i=0;i<2;i++){memcpy(s_players[i].magic,"M4P3",4);s_players[i].enabled=(uint8_t)s_on;s_players[i].mode=(uint8_t)s_mode;}
+    memcpy(out,s_players,sizeof s_players);return sizeof s_players;
 }
 static int valid(const uint8_t *in,int len) {
     if(!len)return !s_on;
-    if(!in || len!=sizeof S)return 0;
-    ProtoState p;memcpy(&p,in,sizeof p);
-    return !memcmp(p.magic,"M4P2",4) && p.enabled==s_on && p.mode==s_mode && p.selected<=1 && p.teleport<=32 &&
-        p.reflected[0]<=1 && p.reflected[1]<=1 && p.reflected[2]<=1;
+    if(!in || len!=sizeof s_players)return 0;
+    ProtoState p[2];memcpy(p,in,sizeof p);
+    for(int i=0;i<2;i++)if(memcmp(p[i].magic,"M4P3",4) || p[i].enabled!=s_on || p[i].mode!=s_mode || p[i].selected>1 || p[i].teleport>32 ||
+        p[i].reflected[0]>1 || p[i].reflected[1]>1 || p[i].reflected[2]>1)return 0;
+    return 1;
 }
-static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(&S,in,sizeof S);else memset(&S,0,sizeof S);return 1;}
+static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(s_players,in,sizeof s_players);else memset(s_players,0,sizeof s_players);return 1;}
 int mm4_proto_json(char *out,int cap) {
     return snprintf(out,cap,"\"proto\":%d,\"mode\":%d,\"swap\":%u,\"switches\":%llu,\"limited\":%llu,\"pose\":%d,\"blocks\":%llu,\"reflections\":%llu,\"hits\":%llu,\"shots\":[%u,%u,%u]",
         mm4_proto_selected(),s_mode,S.teleport,(unsigned long long)S.switches,(unsigned long long)S.limited,drawn_frame(),

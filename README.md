@@ -48,3 +48,9 @@ python tools/qa_wide.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/M
 ```
 
 The check compares native and interpreter execution, decodes terrain against the live viewport, checks native margin activation, and cold-loads a moving scene with a different capture schedule. It records the original game's brief right-edge palette-attribute streaming differences separately. Online play remains unavailable while the widened world and character implementation are unqualified for netplay.
+
+## Co-op development
+
+The development `--coop on` switch provides separate native player, weapon and helper contexts, guest sprite rendering, and either player's native inventory with input assigned to its owner. `--coop-roster protoman-megaman` reverses the default Mega Man / Proto Man order. Personal actors are slots 0–4; native world actors in slots 5–23 remain shared. Guest weapon artwork is read from cartridge packets without private CHR-RAM uploads.
+
+The first control slice is qualified through independent movement, jump, slide, firing, inventory ownership and current-build continuation. Multiplayer combat, lifecycle, views and online behavior remain in development. Co-op is not yet exposed as a launcher package.
