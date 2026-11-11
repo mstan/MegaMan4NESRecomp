@@ -1,0 +1,10 @@
+/build*/
+/generated/
+/release/
+/qa/
+/saves/
+/*.nes
+/*.NES
+/*.cycstate
+/*.log
+__pycache__/
