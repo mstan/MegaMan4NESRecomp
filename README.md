@@ -27,6 +27,8 @@ python tools/qa_controls.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/
 
 The check exercises acquired, locked and empty equipment, native/interpreter execution, graphics/palettes, held and simultaneous inputs, player isolation and current-build held-input continuation.
 
+For fresh-boot QA, `--mm4-qa-entry stage,page,room,art,palette,checkpoint` supplies a one-time entry to the original level initializer. Values are decimal. Initial areas use page, room, art, palette and checkpoint zero; checkpoint records come from the cartridge's native entry table. The original routines still load graphics, terrain, palettes, actors and the arrival sequence. This option is separate from the launcher and disables netplay. It does not write boss defeat, unlock or progression flags, and is not reapplied after a stage clear.
+
 ## Proto Man
 
 Enable the optional Proto Man package in Mods. Its starting-character setting chooses Mega Man or Proto Man. Select swaps characters with a 32-frame teleport, preserves HP and equipment, cancels charge, and protects the player during the beam animation. Native slide, charge, weapon and helper mechanics remain available to both characters.

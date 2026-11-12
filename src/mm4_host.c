@@ -26,8 +26,22 @@ static size_t s_cart_size;
 static FILE *s_log;
 static int s_wide;
 static char s_aspect[16]="fit";
+static unsigned s_qa_entry[6];
+static int s_qa_entry_pending;
 static uint8_t ram(unsigned a) {return cyc_mod_peek((uint16_t)a);}
 static void poke(unsigned a,unsigned v) {cyc_mod_poke((uint16_t)a,(uint8_t)v);}
+static int qa_entry(uint16_t address) {
+    (void)address;
+    if(!s_qa_entry_pending || cyc_mod_isolated())return 0;
+    s_qa_entry_pending=0;
+    /* One-shot test positioning before the original graphics, terrain,
+     * palette, entity and READY initialization. No boss/progression flags. */
+    poke(0x22,s_qa_entry[0]);poke(0xF6,s_qa_entry[0]|0x20);
+    poke(0x2A,s_qa_entry[1]);poke(0xF9,s_qa_entry[1]);poke(0x348,s_qa_entry[1]);
+    poke(0x45,s_qa_entry[1]);poke(0x46,s_qa_entry[2]);
+    poke(0x47,s_qa_entry[3]);poke(0x48,s_qa_entry[4]);poke(0x1F,s_qa_entry[5]);
+    return 0;
+}
 static uint8_t prg(unsigned bank,unsigned address) {
     size_t p=(size_t)bank*0x2000+(address&0x1fff);
     return p<s_cart_size?s_cart[p]:0xff;
@@ -132,6 +146,14 @@ static void frame_end(void *ctx) {
 }
 static bool option(void *ctx,const char *name,const char *value) {
     (void)ctx;
+    if(!strcmp(name,"--mm4-qa-entry")) {
+        unsigned v[6];char tail;
+        if(sscanf(value,"%u,%u,%u,%u,%u,%u%c",v,v+1,v+2,v+3,v+4,v+5,&tail)!=6 ||
+            v[0]>=16 || v[1]>=48 || v[2]>=16 || v[3]>=128 || v[4]>=16 || v[5]>2)return false;
+        memcpy(s_qa_entry,v,sizeof v);s_qa_entry_pending=1;
+        nes_mod_set_function_hook_enabled("mm4.qa.entry",1);
+        nes_mod_set_local_only("MM4 QA entry positioning",1);return true;
+    }
     if(!strcmp(name,"--coop") || !strcmp(name,"--coop-roster")) {
         if(!strcmp(name,"--coop")) {
             if(strcmp(value,"on") && strcmp(value,"off"))return false;
@@ -196,6 +218,7 @@ NES_MOD_CONSTRUCTOR(register_mm4_controls) {
     mm4_wide_register();
     mm4_coop_register();
     nes_mod_register_function_entry_plugin("mm4.player.dispatch",0x80da,mm4_controls_dispatch);
+    nes_mod_register_function_entry_plugin("mm4.qa.entry",0xC592,qa_entry);
     nes_mod_register_savestate_hook("mm4.controls",get,set);
     nes_mod_register_savestate_validator("mm4.controls",valid);
     nes_mod_register_reset_callback(reset);
@@ -207,6 +230,7 @@ const CycHostExtras *cyc_host_extras(void) {
     static const CycInputProfile profile={.id="megaman-weapons-1",.game_label={"Previous weapon (L)","Next weapon (R)"},
         .game_pad={"leftshoulder","rightshoulder"},.shortcut_pad={"none","leftstick+rightstick",NULL,NULL,NULL,NULL,NULL}};
     static const CycHostOption options[]={{"--weapon-cycle",true,"on|off: cycle acquired weapons and helpers with L/R"},
+        {"--mm4-qa-entry",true,"stage,page,room,art,palette,checkpoint: one-time native QA entry"},
         {"--mm4-controls-log",true,"FILE: per-frame control state for QA"},
         {"--protoman",true,"on|off: solo Proto Man and Select swapping"},
         {"--proto-mode",true,"protoman|megaman: character traits or reskin"},

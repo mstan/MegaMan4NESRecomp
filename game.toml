@@ -4,6 +4,12 @@ output_prefix = "mega-man-4"
 console = "nes"
 
 [[mod_function_hook]]
+id = "mm4.qa.entry"
+addr = 0xC592
+length = 8
+crc32 = 0x80F1BF89
+
+[[mod_function_hook]]
 id = "mm4.player.dispatch"
 addr = 0x80DA
 length = 8
