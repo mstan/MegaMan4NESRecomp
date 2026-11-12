@@ -118,6 +118,24 @@ length = 8
 crc32 = 0xFA60D553
 
 [[mod_function_hook]]
+id = "mm4.coop.before-vertical"
+addr = 0xCDD5
+length = 8
+crc32 = 0x09191B0D
+
+[[mod_function_hook]]
+id = "mm4.coop.after-vertical"
+addr = 0xCE96
+length = 8
+crc32 = 0x62CB27A5
+
+[[mod_function_hook]]
+id = "mm4.coop.scene-draw"
+addr = 0xDB3A
+length = 8
+crc32 = 0xC227E028
+
+[[mod_function_hook]]
 id = "mm4.coop.personal-end"
 addr = 0x8052
 length = 8

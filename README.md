@@ -83,7 +83,16 @@ Either living player can lead the tested right-hand boss shutter. The stage dire
 python tools/qa_coop_exit.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/coop-exit
 ```
 
-This focused regression uses real Right input from the existing Bright Man checkpoint entry, with either player leading and the other idle. It checks the native boss intro, personal inventory, one world clock, interpreter agreement and a cold continuation during the actual shutter script. Vertical, alternate and distant exits retain their separate qualification requirements.
+This focused regression uses real Right input from the existing Bright Man checkpoint entry, with either player leading and the other idle. It checks the native boss intro, personal inventory, one world clock, interpreter agreement and a cold continuation during the actual shutter script. Alternate and distant exits retain their separate qualification requirements.
+
+Either player can also lead native upward and downward ladder scrolling. Both bodies ride the original script on its real clock and retain personal HP, weapon and ammo. They share the authored ladder column during the scroll, then resume their own controls. The scroll's saved return context distinguishes its completion from nested tile-streaming calls.
+
+```text
+python tools/qa_coop_exit.py --vertical --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/coop-up
+python tools/qa_coop_exit.py --vertical --return-down --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/coop-return
+```
+
+The ladder checks enter the original Bright Man room initializer, supply explicit player positions on native ladder/floor tiles and use actual directional input. The return follows the completed climb, with the opposite player leading. Both directions have interpreter and mid-scroll cold picture/state/PCM coverage. These are representative transition checks, separate from stage smoke coverage and the optional wait-for-both policy.
 
 Personal button edges advance when that player's native controller runs. A new held press that begins during an output-only lag frame remains available to the next controller update, including during dense boss effects. Current-build continuation retains that input history.
 

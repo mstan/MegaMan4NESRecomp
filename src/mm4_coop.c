@@ -30,6 +30,7 @@ typedef struct {
     uint8_t withdrawn,select_hold[2],select_armed[2],teleport[2],arrival_floor[2];
     uint64_t withdrawals[2],rejoins[2];
     uint16_t previous_x[2];
+    uint8_t scene_stack;
 } Coop;
 static Coop C;
 static int s_on,s_roster,s_scope,s_personal_bhv,s_collision,s_death_wait,s_view;
@@ -462,13 +463,54 @@ static int frame_end(uint16_t address){
     if(C.player[other].dead==1 && !C.waited[other] && !dead_step(other))C.failures++;
     return after_world(address);
 }
+static void scene_follow(void) {
+    if(!s_on || !C.initialized || C.menu || cyc_mod_isolated() || !C.scene_active || R(0x22)>=16)return;
+    int seat=C.anchor^1;Player *p=&C.player[seat];
+    if(p->dead || (C.withdrawn&(1u<<seat)) || !(personal(p,0xB0)&31))return;
+    /* The native script advances once. Carry the other body on that same
+     * clock, including intermediate vertical/door animation frames. */
+    C.current=C.anchor;capture(&C.player[C.anchor]);
+    for(int base=0x300;base<=0x5B8;base+=24)set_personal(p,base,R(base));
+    for(int a=0x30;a<=0x3F;a++)if(a!=0x3C)set_personal(p,a,R(a));
+    int x=(R(0x348)<<8)|R(0x330);if(C.scene_active==1)x-=16;if(x<0)x=0;
+    set_personal(p,0x330,x);set_personal(p,0x348,x>>8);
+    set_personal(p,0x3C,60);set_personal(p,0x5B8,60);
+    for(int slot=1;slot<5;slot++)set_personal(p,0x300+slot,0);
+    p->previous=C.raw[seat];
+}
 static int before_horizontal_scroll(uint16_t address) {
-    (void)address;if(s_on && C.initialized && !C.menu && !cyc_mod_isolated())C.scene_active=1;return 0;
+    (void)address;if(s_on && C.initialized && !C.menu && !cyc_mod_isolated()){
+        CycModRegs r;cyc_mod_regs(&r);C.scene_stack=r.s;C.scene_active=1;scene_follow();
+    }return 0;
+}
+static int vertical_intent(const Player *p) {
+    if(personal(p,0x390) || personal(p,0x348)!=R(0xF9))return 0;
+    int y=personal(p,0x378),direction=y>=0xE8?4:(y<8 && personal(p,0x30)==3?8:0);
+    if(!direction)return 0;
+    if(R(0x2B)&0xC0)return 1;
+    if(R(0xFC))return 0;
+    int room=R(0x2B)&15,bank=R(0x22)|0x20,flags=direction<<4,forward=0;
+    /* CD24's horizontal/vertical junctions and CCD0's authored links. */
+    if(!R(0x2D))forward=(mm4_cart_prg(bank,0xB531+room)&flags)!=0;
+    else if(R(0x2E)){
+        if(R(0x2E)!=R(0x2D))return 0;
+        forward=1;
+    }
+    if(forward){if(mm4_cart_prg(bank,0xB531+room)&flags&0xC0)return 1;}
+    else if(room){
+        int previous=mm4_cart_prg(bank,0xB52F+room),current=mm4_cart_prg(bank,0xB530+room);
+        if(((current&0xC0) || !(previous&0x20)) && (previous&0xC0) && ((previous^0xC0)&flags))return 1;
+    }
+    for(int at=0;at<256;at+=4){
+        int page=mm4_cart_prg(bank,0xB540+at);if(page&128)break;
+        if(page==R(0xF9) && (mm4_cart_prg(bank,0xB541+at)&flags))return 1;
+    }
+    return 0;
 }
 static int before_director(uint16_t address) {
     (void)address;
     if(!s_on || !C.initialized || C.menu || A.active || W.active || C.scene_active || cyc_mod_isolated() ||
-       R(0x22)>=16 || R(0x19) || R(0x1A) || R(0x30)>=8 || (R(0x2B)&0xC0))return 0;
+       R(0x22)>=16 || R(0x19) || R(0x1A) || R(0x30)>=8)return 0;
     int seat=C.anchor^1;Player *p=&C.player[seat];
     if(!mm4_coop_live(seat) || C.teleport[seat] || personal(p,0x30)>4)return 0;
     int x=personal(p,0x330)+256*personal(p,0x348),end=R(0xF9)-R(0x2E)+R(0x2D);
@@ -476,9 +518,11 @@ static int before_director(uint16_t address) {
      * last room page, at a native shutter probe or beyond the screen edge.
      * Transfer the actual player before that director runs, leaving its
      * original stack, room selection and multi-frame scroll script intact. */
-    if(x<=C.previous_x[seat] || (x>>8)!=end || (personal(p,0x3F)!=0x50 && (x&255)<=0xF0))return 0;
+    int right=!(R(0x2B)&0xC0) && x>C.previous_x[seat] && (x>>8)==end &&
+        (personal(p,0x3F)==0x50 || (x&255)>0xF0);
+    if(!right && !vertical_intent(p))return 0;
     capture(&C.player[C.anchor]);C.anchor=C.current=(uint8_t)seat;project(p);
-    if(R(0x2E)!=R(0x2D)){center_camera();P(0x25,R(0xFC));}
+    if(right && R(0x2E)!=R(0x2D)){center_camera();P(0x25,R(0xFC));}
     P(0x27,C.previous_x[seat]);P(0x28,C.previous_x[seat]>>8);
     if(!mm4_controls_art(R(0xA0)))C.failures++;P(0x18,255);
     P(0x14,A.pressed[seat]);P(0x16,C.raw[seat]&~0x30);P(0x15,0);P(0x17,0);
@@ -486,22 +530,25 @@ static int before_director(uint16_t address) {
 }
 static int after_horizontal_scroll(uint16_t address) {
     (void)address;
-    if(!s_on || !C.initialized || C.menu || cyc_mod_isolated() || !C.scene_active || R(0x22)>=16)return 0;
-    C.scene_active=0;
+    if(!s_on || !C.initialized || C.menu || cyc_mod_isolated() || C.scene_active!=1 || R(0x22)>=16)return 0;
+    CycModRegs r;cyc_mod_regs(&r);if(r.s!=C.scene_stack)return 0;
     /* The original 128-frame door script moved the real player and camera.
      * Bring the partner into that completed destination, retaining inventory. */
-    int seat=C.anchor^1;Player *p=&C.player[seat];
-    if(p->dead || (C.withdrawn&(1u<<seat)) || !(personal(p,0xB0)&31))return 0;
-    C.current=C.anchor;capture(&C.player[C.anchor]);
-    for(int base=0x300;base<=0x5B8;base+=24)set_personal(p,base,R(base));
-    for(int a=0x30;a<=0x3F;a++)if(a!=0x3C)set_personal(p,a,R(a));
-    int x=((R(0x348)<<8)|R(0x330))-16;if(x<0)x=0;
-    set_personal(p,0x330,x);set_personal(p,0x348,x>>8);
-    set_personal(p,0x32,0);set_personal(p,0x33,0);set_personal(p,0x35,0);set_personal(p,0x36,0);
-    set_personal(p,0x3C,60);set_personal(p,0x5B8,60);
-    for(int slot=1;slot<5;slot++)set_personal(p,0x300+slot,0);
-    p->previous=C.raw[seat];return 0;
+    scene_follow();C.scene_active=0;return 0;
 }
+static int before_vertical_scroll(uint16_t address) {
+    (void)address;if(s_on && C.initialized && !C.menu && !cyc_mod_isolated()){
+        CycModRegs r;cyc_mod_regs(&r);C.scene_stack=r.s;C.scene_active=2;scene_follow();
+    }return 0;
+}
+static int after_vertical_scroll(uint16_t address) {
+    (void)address;if(s_on && !cyc_mod_isolated() && C.scene_active==2){
+        /* CE96 also returns from nested tile-streaming calls. Only the
+         * original director's return completes this multi-frame scene. */
+        CycModRegs r;cyc_mod_regs(&r);if(r.s==C.scene_stack){scene_follow();C.scene_active=0;}
+    }return 0;
+}
+static int scene_draw(uint16_t address) {(void)address;scene_follow();return 0;}
 static int pause_entry(uint16_t address) {
     (void)address;
     if(!s_on || !C.initialized || C.menu || C.pending_pause>1 || cyc_mod_isolated())return 0;
@@ -591,7 +638,7 @@ void mm4_coop_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
     }
 }
 void mm4_coop_power(void) { memset(&C,0,sizeof C);memset(&A,0,sizeof A);memset(&W,0,sizeof W);C.pending_pause=255;s_scope=s_personal_bhv=s_collision=s_death_wait=0;addresses(); }
-static const char *const HOOKS[]={"mm4.coop.controller","mm4.coop.after-controller","mm4.coop.personal-end","mm4.coop.world-begin","mm4.coop.pause","mm4.coop.after-scroll","mm4.coop.before-scroll","mm4.coop.dying","mm4.coop.death-music","mm4.coop.after-world","mm4.coop.retry","mm4.coop.arrival","mm4.coop.death-wait","mm4.coop.pit","mm4.coop.frame-end","mm4.coop.before-director"};
+static const char *const HOOKS[]={"mm4.coop.controller","mm4.coop.after-controller","mm4.coop.personal-end","mm4.coop.world-begin","mm4.coop.pause","mm4.coop.after-scroll","mm4.coop.before-scroll","mm4.coop.dying","mm4.coop.death-music","mm4.coop.after-world","mm4.coop.retry","mm4.coop.arrival","mm4.coop.death-wait","mm4.coop.pit","mm4.coop.frame-end","mm4.coop.before-director","mm4.coop.before-vertical","mm4.coop.after-vertical","mm4.coop.scene-draw"};
 void mm4_coop_set(int enabled,int roster) {
     if(enabled)mm4_proto_cancel_swap();
     s_on=enabled!=0;s_roster=roster!=0;C.initialized=0;C.current=C.anchor=0;C.pending_pause=255;
@@ -600,11 +647,11 @@ void mm4_coop_set(int enabled,int roster) {
     nes_mod_set_local_only("MM4 personal co-op (unqualified netplay)",s_on);mm4_view_coop(s_on);
     mm4_coop_view_set(s_view);
 }
-static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4C9",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
+static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4CA",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
 static int valid(const uint8_t *in,int len) {
     if(!len)return !s_on;if(!in || len!=sizeof C)return 0;
     static Coop p;memcpy(&p,in,sizeof p);
-    if(memcmp(p.magic,"M4C9",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.scene_active>1||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2)return 0;
+    if(memcmp(p.magic,"M4CA",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.scene_active>2||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2)return 0;
     if(p.initialized && (p.withdrawn&(1u<<p.anchor)))return 0;
     for(int seat=0;seat<2;seat++)if(p.select_hold[seat]>90||p.select_armed[seat]>1||p.teleport[seat]>TELE_IN||p.arrival_floor[seat]>=240||(!p.teleport[seat])!=!(p.withdrawn&(1u<<seat)))return 0;
     const Picture *f[2]={&p.build,&p.frame};
@@ -636,6 +683,9 @@ void mm4_coop_register(void) {
     nes_mod_register_function_entry_plugin(HOOKS[11],0xC65B,arrival);nes_mod_register_function_entry_plugin(HOOKS[12],0xC7F3,death_wait_end);
     nes_mod_register_function_entry_plugin(HOOKS[13],0xDC1F,dying);nes_mod_register_function_entry_plugin(HOOKS[14],0xC7CB,frame_end);
     nes_mod_register_function_entry_plugin(HOOKS[15],0xC96E,before_director);
+    nes_mod_register_function_entry_plugin(HOOKS[16],0xCDD5,before_vertical_scroll);
+    nes_mod_register_function_entry_plugin(HOOKS[17],0xCE96,after_vertical_scroll);
+    nes_mod_register_function_entry_plugin(HOOKS[18],0xDB3A,scene_draw);
     nes_mod_register_savestate_hook("mm4.coop",get,set);nes_mod_register_savestate_validator("mm4.coop",valid);
     nes_mod_register_function_entry_plugin("mm4.coop.target-begin",0x804F,target_begin);
     nes_mod_register_function_entry_plugin("mm4.coop.target-end",0x8097,target_end);
