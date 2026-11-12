@@ -241,6 +241,6 @@ const CycHostExtras *cyc_host_extras(void) {
         {"--coop",true,"on|off: development native personal co-op"},
         {"--coop-roster",true,"megaman-protoman|protoman-megaman: player order"}};
     static const CycHostExtras extras={.power_on=power,.frame_end=frame_end,.input=input,.option=option,
-        .options=options,.option_count=10,.input_profile=&profile};
+        .options=options,.option_count=sizeof options/sizeof *options,.input_profile=&profile};
     return &extras;
 }
