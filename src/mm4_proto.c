@@ -22,6 +22,10 @@ typedef struct {
     uint64_t switches,limited,blocks,reflections,hits;
 } ProtoState;
 static ProtoState s_players[2];
+/* A synchronous collision callback cannot open a second machine snapshot.
+ * Prepare the native constructor result before entering that callback. This
+ * packet never survives its owning native actor dispatch or a frame boundary. */
+static struct { int ready,enemy,slot;uint8_t data[30]; } s_guest_reflection;
 #define S (s_players[mm4_coop_seat()])
 static uint8_t prg(int bank,int address) {
     size_t at=(size_t)bank*0x2000+(address&0x1fff);
@@ -98,31 +102,42 @@ static int damage(uint16_t address) {
     cyc_mod_set_regs(&r);return 0;
 }
 static int reflected(int slot) {return slot>=1 && slot<=3 && S.reflected[slot-1] && R(0x300+slot)==2;}
-static int shield(uint16_t address) {
-    (void)address;
-    if(!shield_up() || cyc_mod_isolated())return 0;
-    CycModRegs caller;cyc_mod_regs(&caller);int enemy=caller.x;
-    if(enemy<8 || enemy>=24)return 0;
+static int reflection_bullet(int enemy) {
+    if(!shield_up() || enemy<8 || enemy>=24)return 0;
     int type=R(0x300+enemy);
-    /* Native straight bullets from the hiding shooter and wall turret. */
     if(type!=0x51 && type!=0xb1)return 0;
     int x=(R(0x348)<<8)|R(0x330),ex=(R(0x348+enemy)<<8)|R(0x330+enemy);
     int dx=ex-x,dy=(int)R(0x378+enemy)-R(0x378);
     if((R(0x528)&64)?dx<0 || dx>20:dx>0 || dx<-20)return 0;
-    if(dy<-16 || dy>12 || R(0x390+enemy))return 0;
+    return dy>=-16 && dy<=12 && !R(0x390+enemy);
+}
+static int reflection_packet(int slot,uint8_t data[30]) {
+    if(!cyc_mod_isolate_begin())return 0;
+    CycModRegs r;cyc_mod_regs(&r);
+    P(0xf5,0x3c);P(0xf6,0x3d);
+    int ok=cyc_mod_call(0xff37,&r);
+    P(0xa0,0);P(0x35,0);P(0x36,7);P(0x11,0x18);P(0x12,0x21);
+    r.x=0;r.y=(uint8_t)slot;
+    if(ok)ok=cyc_mod_call(0x8d5c,&r);
+    int n=0;for(int base=0x300;base<=0x5b8;base+=24)data[n++]=R(base+slot);
+    cyc_mod_isolate_end();return ok;
+}
+static int shield(uint16_t address) {
+    (void)address;
+    if(cyc_mod_isolated() && !mm4_coop_native_scope())return 0;
+    CycModRegs caller;cyc_mod_regs(&caller);int enemy=caller.x;
+    /* Native straight bullets from the hiding shooter and wall turret. */
+    if(!reflection_bullet(enemy))return 0;
     int slot;for(slot=1;slot<=3;slot++)if(!R(0x300+slot))break;
-    if(slot<=3 && cyc_mod_isolate_begin()) {
-        CycModRegs r=caller;
-        P(0xf5,0x3c);P(0xf6,0x3d);
-        int ok=cyc_mod_call(0xff37,&r);
-        P(0xa0,0);P(0x35,0);P(0x36,7);P(0x11,0x18);P(0x12,0x21);
-        r.x=0;r.y=(uint8_t)slot;
-        if(ok)ok=cyc_mod_call(0x8d5c,&r);
-        uint8_t data[30];int n=0;
-        for(int base=0x300;base<=0x5b8;base+=24)data[n++]=R(base+slot);
-        cyc_mod_isolate_end();
+    if(cyc_mod_isolated() && s_guest_reflection.ready && !R(0x300+s_guest_reflection.slot))slot=s_guest_reflection.slot;
+    if(slot<=3) {
+        uint8_t data[30];int ok=0;
+        if(cyc_mod_isolated()) {
+            ok=s_guest_reflection.ready && s_guest_reflection.enemy==enemy && s_guest_reflection.slot==slot;
+            if(ok)memcpy(data,s_guest_reflection.data,sizeof data);
+        } else ok=reflection_packet(slot,data);
         if(ok) {
-            n=0;for(int base=0x300;base<=0x5b8;base+=24)P(base+slot,data[n++]);
+            int n=0;for(int base=0x300;base<=0x5b8;base+=24)P(base+slot,data[n++]);
             P(0x330+slot,R(0x330+enemy));P(0x348+slot,R(0x348+enemy));
             P(0x378+slot,R(0x378+enemy));P(0x390+slot,0);
             S.reflected[slot-1]=1;S.reflections++;
@@ -133,17 +148,16 @@ static int shield(uint16_t address) {
 }
 static int skip_reflected(uint16_t address) {
     (void)address;
-    if(!s_on || cyc_mod_isolated())return 0;
+    if(!s_on || (cyc_mod_isolated() && !mm4_coop_native_scope()))return 0;
     CycModRegs r;cyc_mod_regs(&r);
     /* The next BPL skips this shot. Its separate native Buster collision
      * below also runs while Rain Flush/Flash Stopper owns the weapon path. */
     if(reflected(r.y)){r.p&=(uint8_t)~0x80;cyc_mod_set_regs(&r);}
     return 0;
 }
-static int reflected_hits(uint16_t address) {
-    (void)address;
+static int reflected_hits_actor(int enemy) {
     if(!s_on || cyc_mod_isolated())return 0;
-    CycModRegs caller;cyc_mod_regs(&caller);int enemy=caller.x;
+    CycModRegs caller;cyc_mod_regs(&caller);
     if(enemy<5 || enemy>=24 || !R(0x300+enemy) || !(R(0x528+enemy)&128) || (R(0x528+enemy)&4))return 0;
     for(int slot=3;slot>=1;slot--) {
         if(!reflected(slot) || !(R(0x528+slot)&128))continue;
@@ -179,6 +193,23 @@ static int reflected_hits(uint16_t address) {
     }
     return 0;
 }
+static int reflected_hits(uint16_t address) {
+    (void)address;CycModRegs r;cyc_mod_regs(&r);return reflected_hits_actor(r.x);
+}
+void mm4_proto_guest_collision(int actor) {
+    s_guest_reflection.ready=0;
+    if(!s_on || cyc_mod_isolated())return;
+    /* Resolve this seat's reflected Busters through native overlap/damage
+     * before its ordinary weapon/contact pass. The selected weapon, primary
+     * personal context and machine clocks are untouched by those pure calls. */
+    reflected_hits_actor(actor);
+    if(!reflection_bullet(actor))return;
+    int slot;for(slot=1;slot<=3;slot++)if(!R(0x300+slot))break;
+    if(slot<=3 && reflection_packet(slot,s_guest_reflection.data)) {
+        s_guest_reflection.enemy=actor;s_guest_reflection.slot=slot;s_guest_reflection.ready=1;
+    }
+}
+void mm4_proto_guest_collision_end(void) {s_guest_reflection.ready=0;}
 void mm4_proto_body(Mm4ProtoBody *b) {
     memset(b,0,sizeof *b);
     b->active=(uint8_t)(mm4_proto_active() && R(0x22)<16);b->state=R(0x30);

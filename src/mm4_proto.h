@@ -24,3 +24,6 @@ int mm4_proto_dispatch(void);
 int mm4_proto_enabled(void);
 void mm4_controls_refresh(void);
 void mm4_proto_cancel_swap(void);
+/* Called with the guest projected, before its bounded collision scope. */
+void mm4_proto_guest_collision(int actor);
+void mm4_proto_guest_collision_end(void);

@@ -88,6 +88,7 @@ static int hooks(int enable) {
         for(int i=0;i<s_hook_count;i++) {
             HookSetting *h=&s_hooks[i];nes_mod_function_hook_at(i,&h->id,NULL,&h->enabled,NULL);
             int allowed=!strcmp(h->id,"mm4.proto.shot") || !strcmp(h->id,"mm4.proto.muzzle") || !strcmp(h->id,"mm4.proto.damage");
+            allowed|=!strcmp(h->id,"mm4.proto.shield") || !strcmp(h->id,"mm4.proto.skip-reflected");
             allowed|=!strcmp(h->id,"mm4.coop.personal-end");
             allowed|=!strcmp(h->id,"mm4.coop.dying") || !strcmp(h->id,"mm4.coop.pit") || !strcmp(h->id,"mm4.coop.death-music") || !strcmp(h->id,"mm4.coop.death-wait");
             if(h->enabled && !allowed)nes_mod_set_function_hook_enabled(h->id,0);
@@ -172,15 +173,25 @@ static int after_controller(uint16_t address) {
 static int other_collision(int seat,int actor) {
     if(C.player[seat].dead || !(personal(&C.player[seat],0xB0)&31) || !R(0x300+actor) || R(0x30)>=8)return 1;
     int boss=actor==R(0x146) && (R(0x132)&128) && R(0x450+actor)>0,finisher=0;
+    /* Native reflected-shot calls need their own isolated machine snapshot.
+     * Run them with the guest projected before opening its collision scope;
+     * the real native shield contact hook consumes a prepared constructor. */
+    int owner=C.current;
+    if(mm4_proto_enabled()){
+        Player primary;capture(&primary);C.current=(uint8_t)seat;project(&C.player[seat]);
+        mm4_proto_guest_collision(actor);capture(&C.player[seat]);
+        C.current=(uint8_t)owner;project(&primary);
+    }
     uint8_t before[2048],after[2048];snapshot_ram(before);
-    if(!cyc_mod_isolate_begin())return 0;
-    int owner=C.current;C.current=(uint8_t)seat;project(&C.player[seat]);
+    if(!cyc_mod_isolate_begin()){mm4_proto_guest_collision_end();return 0;}
+    C.current=(uint8_t)seat;project(&C.player[seat]);
     s_scope=1;int enabled=hooks(1),ok=enabled;CycModRegs r;cyc_mod_regs(&r);
     P(0xF5,0x3A);P(0xF6,0x3B);if(ok)ok=cyc_mod_call(0xFF37,&r);
     r.x=(uint8_t)actor;P(0xEB,actor);s_collision=1;
-    if(ok)ok=cyc_mod_call(0x8097,&r);s_collision=0;
+    if(ok && R(0x300+actor))ok=cyc_mod_call(0x8097,&r);s_collision=0;
     if(ok){finisher=boss && !R(0x450+actor);capture(&C.player[seat]);snapshot_ram(after);}
     if(enabled)hooks(0);s_scope=0;cyc_mod_isolate_end();C.current=(uint8_t)owner;
+    mm4_proto_guest_collision_end();
     if(ok)merge_world(before,after);
     if(finisher) {
         /* The winning seat owns the original victory/weapon-get script.
