@@ -118,12 +118,18 @@ static int inventory(uint32_t *out,int W,int H,const uint32_t *native) {
 static void character_body(uint32_t *out, int W, int origin, const Mm4ProtoBody *b) {
     const CycProtoAtlas *atlas = mm4_proto_atlas();
     if (!atlas || b->pose >= CYC_PROTO_POSE_COUNT) return;
-    const CycProtoPose *p = &atlas->poses[b->pose];
+    int marine=b->state==4 && b->weapon==3;
+    const CycProtoPose *p = &atlas->poses[marine?CYC_PROTO_IDLE0:b->pose];
     for (int y = 0; y < p->height; ++y) for (int x = 0; x < p->width; ++x) {
+        if(marine && (y<8 || y>=22))continue;
         int index = p->pixels[y * 32 + x];
         if (!index) continue;
         int dx = x - p->origin_x, dy = y + p->top_y;
         int px = b->x + (b->right ? -dx - 1 : dx), py = b->y + (b->flipped ? -dy : dy + 1);
+        if(marine) {
+            px=b->x+(b->right?15-x:x-16);
+            if(px<b->x-8 || px>=b->x+8)continue;
+        }
         if (origin + px < 0 || origin + px >= W || py < 0 || py >= 240 ||
             !(cyc_render_line_mask(py) & 16) || (!s_panel_drawing && px < 8 && !(cyc_render_line_mask(py) & 4)) ||
             s_claimed[py * W + origin + px]) continue;
@@ -132,8 +138,14 @@ static void character_body(uint32_t *out, int W, int origin, const Mm4ProtoBody 
         if (!b->behind || !s_opaque[at]) out[at] = color(index, b);
     }
 }
+int mm4_view_native_body_pixel(const Mm4ProtoBody *b,int origin,int x,int y) {
+    if(b->state!=4 || b->weapon!=3)return 0;
+    const CycProtoAtlas *atlas=mm4_proto_atlas();if(!atlas)return 1;
+    int left=origin+b->x-8,top=b->y+1+atlas->poses[CYC_PROTO_IDLE0].top_y+8;
+    return x<left || x>=left+16 || y<top || y>=top+14;
+}
 void mm4_view_draw_character(uint32_t *out,int W,int origin,const Mm4ProtoBody *b) {character_body(out,W,origin,b);}
-static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oam) {
+static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oam,const Mm4ProtoBody *body) {
     const uint8_t *o = oam + slot * 4;
     int top = o[0] + 1, height = cyc_render_line_sprite16(top < 240 ? top : 239) ? 16 : 8;
     for (int y = 0; y < height; ++y) {
@@ -147,6 +159,7 @@ static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oa
             int px = o[3] + x, bit = (o[2] & 64) ? x : 7 - x;
             int v = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1);
             if (!v || origin + px >= W || (px < 8 && !(cyc_render_line_mask(py) & 4))) continue;
+            if(body && !mm4_view_native_body_pixel(body,origin,origin+px,py))continue;
             int at = py * W + origin + px;
             if (s_claimed[at]) continue;
             s_claimed[at] = 1;
@@ -229,8 +242,11 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
         int rank=mm4_wide_rank(owner);
         if(rank!=255)while(drawn_rank<rank)mm4_wide_draw(out,W,origin,s_opaque,s_claimed,++drawn_rank);
         if(s_no_flicker && owner<24 && rank!=255)continue;
-        if (replace && owner == 0) { if (slot == first) character_body(out, W, origin, &s_frame.body); }
-        else if(!mm4_hud_native_meter(oam+slot*4))sprite(out, W, origin, slot, oam);
+        if (replace && owner == 0) {
+            if (slot == first) character_body(out, W, origin, &s_frame.body);
+            if(s_frame.body.state==4 && s_frame.body.weapon==3)sprite(out,W,origin,slot,oam,&s_frame.body);
+        }
+        else if(!mm4_hud_native_meter(oam+slot*4))sprite(out, W, origin, slot, oam,NULL);
     }
     while(drawn_rank<24)mm4_wide_draw(out,W,origin,s_opaque,s_claimed,++drawn_rank);
     mm4_coop_draw(out,W,origin,s_opaque,s_claimed);

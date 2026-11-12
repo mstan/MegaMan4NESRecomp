@@ -213,15 +213,17 @@ void mm4_wide_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
      * previously composed frame until the current compositor returns. */
     int left=S.frame.camera-origin;
     int painted=0;
+    Mm4ProtoBody body=S.frame.body;body.x+=(int16_t)(S.frame.camera-left);
     for (int i=0;i<S.frame.count;i++) {
         const WidePart *p=&S.frame.parts[i];if (mm4_wide_rank(p->owner)!=rank) continue;
         if(complete && !p->owner && S.frame.body.active) {
-            if(!painted){Mm4ProtoBody body=S.frame.body;body.x+=(int16_t)(S.frame.camera-left);mm4_view_draw_character(out,width,0,&body);painted=1;}
-            continue;
+            if(!painted){mm4_view_draw_character(out,width,0,&body);painted=1;}
+            if(body.state!=4 || body.weapon!=3)continue;
         }
         for (int y=0;y<8;y++) for (int x=0;x<8;x++) {
             int v=p->pixels[y*8+x],px=p->x-left+x,py=p->y+y;
             if (!v || px<0 || px>=width || py<0 || py>=240) continue;
+            if(complete && !p->owner && body.active && !mm4_view_native_body_pixel(&body,0,px,py))continue;
             unsigned mask=cyc_render_line_mask(py);
             if(!(mask&16) || (!mm4_coop_independent() && px>=origin && px<origin+8 && !(mask&4)))continue;
             if(!S.frame.extended && !mm4_coop_independent() && (px<origin || px>=origin+256))continue;

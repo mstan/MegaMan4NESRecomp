@@ -17,6 +17,8 @@ int mm4_proto_active(void);
 int mm4_proto_selected(void);
 int mm4_proto_swapping(void);
 void mm4_proto_body(Mm4ProtoBody *body);
+/* Native Marine remains intact outside the replaced pilot's cockpit. */
+int mm4_view_native_body_pixel(const Mm4ProtoBody *body,int origin,int x,int y);
 void mm4_view_power(void);
 void mm4_view_register(void);
 void mm4_view_enable(int enabled);
