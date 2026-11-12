@@ -46,6 +46,10 @@ nesrecomp_add_cycle_game(MegaMan4Recomp
         "${CMAKE_SOURCE_DIR}/src/mm4_hud.c"
         "${NESRECOMP_ROOT}/runner/cyc/cyc_protoman_atlas.c")
 target_include_directories(MegaMan4Recomp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_BINARY_DIR}" "${NESRECOMP_ROOT}/runner/src")
+option(MM4_ENABLE_NETPLAY "Build shared rollback netplay and lobby" ON)
+if(MM4_ENABLE_NETPLAY OR NESRECOMP_ENABLE_NET)
+    nesrecomp_enable_recomp_net(MegaMan4Recomp)
+endif()
 target_compile_definitions(MegaMan4Recomp PRIVATE MM4_NETPLAY_QUALIFIED=$<BOOL:${MM4_NETPLAY_QUALIFIED}>)
 add_custom_command(TARGET MegaMan4Recomp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/mods/preloaded" "$<TARGET_FILE_DIR:MegaMan4Recomp>/mods")
