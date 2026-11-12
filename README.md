@@ -55,7 +55,7 @@ The check compares native and interpreter execution, decodes terrain against the
 
 ## Co-op development
 
-The development `--coop on` switch provides separate native player, weapon and helper contexts, guest sprite rendering, and either player's native inventory with input assigned to its owner. `--coop-roster protoman-megaman` reverses the default Mega Man / Proto Man order. Personal actors are slots 0–4; native world actors in slots 5–23 remain shared. Guest weapon artwork is read from cartridge packets without private CHR-RAM uploads.
+Enable the optional Co-op package in Mods, or use `--coop on` for development checks. It provides separate native player, weapon and helper contexts, guest sprite rendering, and either player's native inventory with input assigned to its owner. `--coop-roster protoman-megaman` reverses the default Mega Man / Proto Man order. Personal actors are slots 0–4; native world actors in slots 5–23 remain shared. Guest weapon artwork is read from cartridge packets without private CHR-RAM uploads.
 
 The control slice is qualified through independent movement, jump, slide, firing, inventory ownership and current-build continuation. Each player's Buster and contact hitbox now use the native collision path against the shared world. Completed native horizontal room transitions bring the partner into the destination while preserving personal equipment. A boss finisher becomes the native player for victory and weapon-get, with that player's native weapon graphics and palette restored immediately.
 
@@ -86,4 +86,12 @@ python tools/qa_views.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/
 
 The targeted check uses declared personal positioning in one ordinary horizontal room. It does not force native hero types or mark stage completion. It checks fixed view widths, both living players, identical simulation across split and individual layouts, and cold continuation with matching state, first picture and audio.
 
-Enemy targeting, complete guest weapon behavior, withdrawal/rejoin/checkpoint variants, independent menus and transitions, and online behavior remain in development. Co-op is not yet exposed as a launcher package.
+Hold Select for 90 gameplay updates to withdraw with the native departure beam. The partner continues without losing a life. Release Select, then press it again to return beside the survivor on checked solid ground. HP, selected weapon and ammo stay personal; the last active player cannot withdraw. The return uses the original entry beam and restores normal controls afterward.
+
+```text
+python tools/qa_coop_withdraw.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/withdraw
+```
+
+This targeted check exercises each player, last-player protection, retained equipment, native beam scripts, native/interpreter agreement, and current-build state/picture/PCM continuation during departure and return. Its stationary room suppresses enemies and supplies explicit HP/ammo prerequisites.
+
+Native enemy AI targets the nearest living player, including that player's consumed input. Either player can enter and return from native refight portals; original map and boss-intro scripts carry both players while preserving personal equipment. Complete guest weapon/helper behavior, checkpoint variants, independent inventories, vertical/wait-for-both transitions, and the final online UI/lobby/reconnect qualification remain in development. The online settings adapter seals the gameplay profile and restores offline runtime and catalog preferences on exit; final release qualification remains separate.

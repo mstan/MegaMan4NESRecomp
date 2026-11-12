@@ -17,6 +17,7 @@
 #define R(a) cyc_mod_peek((uint16_t)(a))
 #define P(a,v) cyc_mod_poke((uint16_t)(a),(uint8_t)(v))
 enum { PERSONAL_CAP=384, PART_CAP=96 };
+enum { TELE_NONE, TELE_OUT, TELE_HIDDEN, TELE_IN };
 typedef struct { uint8_t ram[PERSONAL_CAP],previous,dead; } Player;
 typedef struct { int16_t x,y;uint8_t owner,attr,colors[4],pixels[64]; } Part;
 typedef struct { uint8_t valid,seat;uint16_t count,camera;Mm4ProtoBody body;Part parts[PART_CAP]; } Picture;
@@ -26,6 +27,8 @@ typedef struct {
     Player player[2];Picture build,frame;
     uint64_t updates[2],world_updates,failures;
     uint8_t retry,retry_ammo[2][13],waited[2];
+    uint8_t withdrawn,select_hold[2],select_armed[2],teleport[2],arrival_floor[2];
+    uint64_t withdrawals[2],rejoins[2];
 } Coop;
 static Coop C;
 static int s_on,s_roster,s_scope,s_personal_bhv,s_collision,s_death_wait,s_view;
@@ -49,7 +52,7 @@ int mm4_coop_enabled(void) { return s_on; }
 int mm4_coop_seat(void) { return s_on?C.current:0; }
 int mm4_coop_character(void) { return s_on?(s_roster^C.current):-1; }
 int mm4_coop_character_at(int seat) {return s_on && seat>=0 && seat<2?(s_roster^seat):0;}
-int mm4_coop_live(int seat) {return s_on && C.initialized && seat>=0 && seat<2 && !C.player[seat].dead;}
+int mm4_coop_live(int seat) {return s_on && C.initialized && seat>=0 && seat<2 && !C.player[seat].dead && !(C.withdrawn&(1u<<seat));}
 int mm4_coop_view_mode(void) {return s_on?s_view:0;}
 int mm4_coop_independent(void) {return s_on && s_view!=0;}
 int mm4_coop_scene_locked(void) {return C.scene_active || R(0x19) || R(0x1A) || R(0x30)>=8;}
@@ -62,7 +65,7 @@ int mm4_coop_view_rects(int left[2]) {
     if(!s_on || !C.initialized || R(0x22)!=C.stage)return 0;
     int camera=(R(0xF9)<<8)|R(0xFC),start=R(0xF9)-R(0x2E);
     for(int seat=0;seat<2;seat++) {
-        int who=C.player[seat].dead?C.anchor:seat;left[seat]=camera;
+        int who=(C.player[seat].dead || (C.withdrawn&(1u<<seat)))?C.anchor:seat;left[seat]=camera;
         if(!mm4_coop_scene_locked() && !(R(0x2B)&0xC0) && start>=0) {
             int x=(mm4_coop_read(who,0x348)<<8)|mm4_coop_read(who,0x330);
             int lo=start*256,hi=(start+R(0x2D))*256;
@@ -117,7 +120,7 @@ int mm4_coop_read(int seat,uint16_t a) {
 }
 static void warp_follow(void) {
     int seat=C.anchor^1;Player *p=&C.player[seat];
-    if(p->dead || !(personal(p,0xB0)&31))return;
+    if(p->dead || (C.withdrawn&(1u<<seat)) || !(personal(p,0xB0)&31))return;
     /* Only the native body/transition fields follow. Personal HP, equipment,
      * ammo, palette and weapon graphics retain their original owners. */
     for(int base=0x300;base<=0x5B8;base+=24)set_personal(p,base,R(base));
@@ -135,7 +138,7 @@ static int target_begin(uint16_t address) {
     if(r.x<5 || r.x>=24 || !R(0x300+r.x))return 0;
     target_capture(&C.player[C.current]);
     int chosen=C.anchor,best=0x7fffffff,x=R(0x330+r.x)+256*R(0x348+r.x),y=R(0x378+r.x);
-    for(int seat=0;seat<2;seat++)if(!C.player[seat].dead && (personal(&C.player[seat],0xB0)&31)) {
+    for(int seat=0;seat<2;seat++)if(!C.player[seat].dead && !(C.withdrawn&(1u<<seat)) && (personal(&C.player[seat],0xB0)&31)) {
         int distance=abs(x-personal(&C.player[seat],0x330)-256*personal(&C.player[seat],0x348))+abs(y-personal(&C.player[seat],0x378));
         if(distance<best){chosen=seat;best=distance;}
     }
@@ -228,8 +231,12 @@ static int dead_step(int seat){
 }
 static int private_step(int seat) {
     if(C.player[seat].dead)return dead_step(seat);
+    if(C.teleport[seat]==TELE_HIDDEN)return 1;
+    if(C.teleport[seat]==TELE_OUT && personal(&C.player[seat],0x390)) {
+        C.teleport[seat]=TELE_HIDDEN;set_personal(&C.player[seat],0x300,0);return 1;
+    }
     int state=personal(&C.player[seat],0x30);
-    if(state>6 || state==5 || R(0x30)>=8 || C.player[seat].dead)return 1;
+    if((!C.teleport[seat] && (state>6 || state==5)) || R(0x30)>=8)return 1;
     uint8_t before[2048],after[2048];snapshot_ram(before);
     if(!cyc_mod_isolate_begin())return 0;
     int owner=C.current;C.current=(uint8_t)seat;project(&C.player[seat]);center_camera();
@@ -239,10 +246,29 @@ static int private_step(int seat) {
     P(0xf5,0x3c);P(0xf6,0x3d);if(ok)ok=cyc_mod_call(0xff37,&r);
     if(ok)ok=mm4_controls_art(R(0xa0));
     if(ok)mm4_controls_dispatch(0x80da);
-    if(ok)ok=cyc_mod_call(0x8000,&r);
+    if(ok && C.teleport[seat]==TELE_IN) {
+        /* A rejoin beam may pass roofs above its checked landing. Native
+         * acceleration/motion runs until that floor, then its original
+         * terrain probe and opening tail take over (also above native Y64). */
+        r.x=0;
+        if(R(0x378)<C.arrival_floor[seat]) {
+            ok=cyc_mod_call(0xF2A7,&r);
+            if(R(0x390) || R(0x378)>C.arrival_floor[seat])P(0x378,C.arrival_floor[seat]);
+            P(0x390,0);P(0x3E,R(0x378));P(0x3F,0);P(0x540,0);P(0x570,0);
+        } else {
+            r.y=2;ok=cyc_mod_call(0xD428,&r);P(0x44,R(0x10));
+            if(ok){r.x=0;ok=cyc_mod_call(0x873A,&r);}
+        }
+    } else if(ok)ok=cyc_mod_call(0x8000,&r);
     if(ok) {P(0xf5,0x3a);P(0xf6,0x3b);ok=cyc_mod_call(0xff37,&r);}
     s_personal_bhv=1;if(ok)ok=cyc_mod_call(0x8003,&r);s_personal_bhv=0;
-    if(ok){capture(&C.player[seat]);snapshot_ram(after);C.updates[seat]++;C.player[seat].previous=C.raw[seat];}
+    if(ok){
+        if(C.teleport[seat]==TELE_IN && R(0x30)!=10) {
+            C.teleport[seat]=TELE_NONE;C.withdrawn&=(uint8_t)~(1u<<seat);C.rejoins[seat]++;
+            P(0x3C,60);P(0x133,0);P(0x134,0);
+        }
+        capture(&C.player[seat]);snapshot_ram(after);C.updates[seat]++;C.player[seat].previous=C.raw[seat];
+    }
     if(enabled)hooks(0);s_scope=0;cyc_mod_isolate_end();C.current=(uint8_t)owner;
     if(ok)merge_world(before,after);return ok;
 }
@@ -250,10 +276,68 @@ static void initialize(void) {
     C.anchor=C.current=0;C.stage=R(0x22);C.initialized=1;C.menu=0;C.pending_pause=255;
     capture(&C.player[0]);C.player[1]=C.player[0];
     C.player[0].dead=C.player[1].dead=0;
+    C.withdrawn=0;memset(C.select_hold,0,sizeof C.select_hold);memset(C.select_armed,0,sizeof C.select_armed);memset(C.teleport,0,sizeof C.teleport);
     if(C.retry){for(int seat=0;seat<2;seat++)for(int i=0;i<13;i++)set_personal(&C.player[seat],0xB1+i,C.retry_ammo[seat][i]);project(&C.player[0]);C.retry=0;}
     int x=(R(0x348)<<8)|R(0x330);x=x>=32?x-16:x+16;
     set_personal(&C.player[1],0x330,x);set_personal(&C.player[1],0x348,x>>8);
     for(int seat=0;seat<2;seat++)C.player[seat].previous=C.raw[seat];
+}
+static int safe_arrival(int *x,int *y) {
+    if(R(0x30)!=0 || R(0x390))return 0;
+    static const int offsets[]={24,-24,0,8,-8,16,-16,32,-32};
+    int base=(R(0x348)<<8)|R(0x330),yy=R(0x378),start=R(0xF9)-R(0x2E);
+    if(start<0 || yy<16 || yy>222)return 0;
+    int lo=start*256+8,hi=(start+R(0x2D)+1)*256-9;
+    if(R(0x2B)&0xC0){lo=R(0x348)*256+8;hi=lo+239;}
+    for(unsigned i=0;i<sizeof offsets/sizeof *offsets;i++) {
+        int xx=base+offsets[i];if(xx<lo || xx>hi)continue;
+        if(mm4_world_class(xx-7,yy-12)==0 && mm4_world_class(xx+7,yy-12)==0 && mm4_world_class(xx,yy)==0 &&
+           mm4_world_class(xx-6,yy+12)==0x10 && mm4_world_class(xx+6,yy+12)==0x10){*x=xx;*y=yy;return 1;}
+    }
+    return 0;
+}
+static void start_arrival(int seat,int x,int y) {
+    Player *p=&C.player[seat];
+    /* Only body/motion follows the survivor. HP, weapon, ammo and palette
+     * retain their personal owner throughout the native entry beam. */
+    for(int base=0x300;base<=0x5B8;base+=24) {
+        set_personal(p,base,R(base));for(int slot=1;slot<5;slot++)set_personal(p,base+slot,0);
+    }
+    for(int a=0x30;a<=0x3F;a++)set_personal(p,a,0);
+    set_personal(p,0x30,10);set_personal(p,0x31,0);
+    set_personal(p,0x330,x);set_personal(p,0x348,x>>8);set_personal(p,0x378,0);set_personal(p,0x390,0);
+    /* MM4's native entry starts at -1 in its upward-positive velocity
+     * convention. The original gravity routine accelerates it downward. */
+    set_personal(p,0x318,0);set_personal(p,0x360,0);set_personal(p,0x3D8,0);set_personal(p,0x3F0,0xFF);
+    set_personal(p,0x558,0x13);set_personal(p,0x540,0);set_personal(p,0x570,0);set_personal(p,0x5B8,0);
+    set_personal(p,0x528,0x80|(R(0x528)&0x60));set_personal(p,0x133,0);set_personal(p,0x134,0);
+    C.teleport[seat]=TELE_IN;C.arrival_floor[seat]=(uint8_t)y;p->previous=C.raw[seat];
+    memset(C.select_hold,0,sizeof C.select_hold);memset(C.select_armed,0,sizeof C.select_armed);
+}
+static void depart(int seat) {
+    Player *p=&C.player[seat];C.withdrawn|=(uint8_t)(1u<<seat);C.withdrawals[seat]++;C.teleport[seat]=TELE_OUT;
+    for(int slot=1;slot<5;slot++)set_personal(p,0x300+slot,0);
+    set_personal(p,0x30,8);set_personal(p,0x558,0);set_personal(p,0x35,0);set_personal(p,0x36,0);set_personal(p,0x3C,2);
+    memset(C.select_hold,0,sizeof C.select_hold);memset(C.select_armed,0,sizeof C.select_armed);
+    if(seat==C.anchor) {
+        C.current=C.anchor=(uint8_t)(seat^1);project(&C.player[C.anchor]);
+        if(!mm4_controls_art(R(0xA0)))C.failures++;P(0x18,255);
+    }
+}
+static void select_tick(void) {
+    int gameplay=!C.menu && !A.active && !W.active && !C.scene_active && R(0x22)<16 && R(0x30)<=4 && !R(0x19) && !R(0x1A);
+    for(int seat=0;seat<2;seat++) {
+        Player *p=&C.player[seat];int held=(C.raw[seat]&32)!=0;
+        if(!gameplay || p->dead || (C.teleport[seat]!=TELE_NONE && C.teleport[seat]!=TELE_HIDDEN)) {C.select_hold[seat]=0;continue;}
+        if(!held){C.select_armed[seat]=1;C.select_hold[seat]=0;}
+        if(!mm4_coop_live(seat^1) || C.teleport[seat^1]!=TELE_NONE){C.select_hold[seat]=0;continue;}
+        if(C.withdrawn&(1u<<seat)) {
+            if(held && C.select_armed[seat]) {
+                int x,y;C.select_armed[seat]=0;
+                if(safe_arrival(&x,&y))start_arrival(seat,x,y);
+            }
+        } else if(held && C.select_armed[seat] && personal(p,0x30)<=3 && ++C.select_hold[seat]>=90)depart(seat);
+    }
 }
 static int controller(uint16_t address) {
     (void)address;if(!s_on || cyc_mod_isolated())return 0;
@@ -269,6 +353,7 @@ static int controller(uint16_t address) {
     if(C.menu || R(0x22)>=16)return 0;
     C.current=C.anchor;capture(&C.player[C.anchor]);
     test_pokes();
+    select_tick();
     if(!private_step(C.anchor^1))C.failures++;
     C.current=C.anchor;A.pressed[C.anchor]=(uint8_t)(C.raw[C.anchor]&~C.player[C.anchor].previous&~0x30);
     P(0x14,A.pressed[C.anchor]);P(0x16,C.raw[C.anchor]&~0x30);
@@ -281,7 +366,7 @@ static int after_controller(uint16_t address) {
     }return 0;
 }
 static int other_collision(int seat,int actor) {
-    if(C.player[seat].dead || !(personal(&C.player[seat],0xB0)&31) || !R(0x300+actor) || R(0x30)>=8)return 1;
+    if(C.player[seat].dead || C.teleport[seat] || (C.withdrawn&(1u<<seat)) || !(personal(&C.player[seat],0xB0)&31) || !R(0x300+actor) || R(0x30)>=8)return 1;
     int boss=actor==R(0x146) && (R(0x132)&128) && R(0x450+actor)>0,finisher=0;
     /* Native reflected-shot calls need their own isolated machine snapshot.
      * Run them with the guest projected before opening its collision scope;
@@ -335,14 +420,14 @@ static int dying(uint16_t address){
     return 0;
 }
 static int death_music(uint16_t address){
-    (void)address;if(!s_on || !C.initialized || (cyc_mod_isolated() && !s_scope) || C.player[C.current^1].dead)return 0;
+    (void)address;if(!s_on || !C.initialized || (cyc_mod_isolated() && !s_scope) || !mm4_coop_live(C.current^1))return 0;
     CycModRegs r;cyc_mod_regs(&r);int caller=R(0x100|((r.s+1)&255))|(R(0x100|((r.s+2)&255))<<8);
     return r.a==0xF0 && (caller==0x824B || caller==0xDC29);
 }
 static int after_world(uint16_t address){
     (void)address;if(!s_on || !C.initialized || C.menu || cyc_mod_isolated())return 0;
     int other=C.anchor^1;
-    if(!C.player[C.anchor].dead || (C.player[other].dead && !(C.player[other].dead==2 && C.player[C.anchor].dead!=2)))return 0;
+    if(!C.player[C.anchor].dead || (C.withdrawn&(1u<<other)) || (C.player[other].dead && !(C.player[other].dead==2 && C.player[C.anchor].dead!=2)))return 0;
     capture(&C.player[C.anchor]);
     /* Promotion replaces the old anchor before the real frame-end counter.
      * Give that seat its original decrement before projecting the survivor. */
@@ -385,7 +470,7 @@ static int after_horizontal_scroll(uint16_t address) {
     /* The original 128-frame door script moved the real player and camera.
      * Bring the partner into that completed destination, retaining inventory. */
     int seat=C.anchor^1;Player *p=&C.player[seat];
-    if(p->dead || !(personal(p,0xB0)&31))return 0;
+    if(p->dead || (C.withdrawn&(1u<<seat)) || !(personal(p,0xB0)&31))return 0;
     C.current=C.anchor;capture(&C.player[C.anchor]);
     for(int base=0x300;base<=0x5B8;base+=24)set_personal(p,base,R(base));
     for(int a=0x30;a<=0x3F;a++)if(a!=0x3C)set_personal(p,a,R(a));
@@ -408,12 +493,14 @@ void mm4_coop_input(uint8_t buttons[2]) {
     if(!s_on)return;
     for(int seat=0;seat<2;seat++){C.raw[seat]=buttons[seat];C.fresh[seat]=(uint8_t)(buttons[seat]&~C.raw_previous[seat]);C.raw_previous[seat]=buttons[seat];}
     if(C.menu)buttons[0]=C.raw[C.pauser];
-    else if(!C.initialized || R(0x22)>=16 || (C.player[0].dead && C.player[1].dead)){
+    else if(!C.initialized || R(0x22)>=16 || (!mm4_coop_live(0) && !mm4_coop_live(1))){
         buttons[0]=(uint8_t)(C.raw[0]|C.raw[1]);if((buttons[0]&3)==3)buttons[0]&=(uint8_t)~3;if((buttons[0]&12)==12)buttons[0]&=(uint8_t)~12;
     }else {
         C.pending_pause=255;
         buttons[0]=C.raw[C.anchor];
-        for(int seat=0;seat<2;seat++)if(C.fresh[seat]&16){C.pending_pause=(uint8_t)seat;buttons[0]|=16;break;}
+        for(int seat=0;seat<2;seat++)if(mm4_coop_live(seat) && !C.teleport[seat] && (C.fresh[seat]&16)) {
+            C.pending_pause=(uint8_t)seat;buttons[0]|=16;break;
+        }
     }
     buttons[1]=0; /* Original pad-2 Select/B are native debug controls. */
 }
@@ -430,7 +517,7 @@ void mm4_coop_build(void) {
     memset(&C.build,0,sizeof C.build);
     if(!s_on || !C.initialized || C.menu || R(0x22)>=16)return;
     int seat=C.anchor^1,owner=C.current;
-    if(C.player[seat].dead)return;
+    if(C.player[seat].dead || C.teleport[seat]==TELE_HIDDEN)return;
     uint8_t before[2048],after[2048];snapshot_ram(before);
     if(!cyc_mod_isolate_begin())return;
     C.build.camera=(uint16_t)((R(0xF9)<<8)|R(0xFC));C.current=(uint8_t)seat;project(&C.player[seat]);int camera=center_camera();
@@ -490,11 +577,13 @@ void mm4_coop_set(int enabled,int roster) {
     nes_mod_set_local_only("MM4 personal co-op (unqualified netplay)",s_on);mm4_view_coop(s_on);
     mm4_coop_view_set(s_view);
 }
-static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4C6",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
+static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4C7",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
 static int valid(const uint8_t *in,int len) {
     if(!len)return !s_on;if(!in || len!=sizeof C)return 0;
     static Coop p;memcpy(&p,in,sizeof p);
-    if(memcmp(p.magic,"M4C6",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.scene_active>1||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1)return 0;
+    if(memcmp(p.magic,"M4C7",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.scene_active>1||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2)return 0;
+    if(p.initialized && (p.withdrawn&(1u<<p.anchor)))return 0;
+    for(int seat=0;seat<2;seat++)if(p.select_hold[seat]>90||p.select_armed[seat]>1||p.teleport[seat]>TELE_IN||p.arrival_floor[seat]>=240||(!p.teleport[seat])!=!(p.withdrawn&(1u<<seat)))return 0;
     const Picture *f[2]={&p.build,&p.frame};
     for(int i=0;i<2;i++) {
         if(f[i]->valid>1||f[i]->seat>1||f[i]->count>PART_CAP||f[i]->body.pose>=CYC_PROTO_POSE_COUNT||f[i]->body.active>1||f[i]->body.right>1||f[i]->body.flipped>1||f[i]->body.behind>1)return 0;
@@ -530,8 +619,9 @@ void mm4_coop_register(void) {
     nes_mod_register_savestate_hook("mm4.coop-warp",warp_get,warp_set);nes_mod_register_savestate_validator("mm4.coop-warp",warp_valid);
 }
 int mm4_coop_json(char *out,int cap) {
-    return snprintf(out,cap,"\"coop\":{\"on\":%d,\"ready\":%u,\"anchor\":%u,\"menu\":%u,\"pauser\":%u,\"world\":%llu,\"updates\":[%llu,%llu],\"failed\":%llu,\"dead\":[%u,%u],\"retry\":%u,\"lives\":%u,\"players\":[[%d,%d,%d,%d,%d,%d],[%d,%d,%d,%d,%d,%d]]}",
+    return snprintf(out,cap,"\"coop\":{\"on\":%d,\"ready\":%u,\"anchor\":%u,\"menu\":%u,\"pauser\":%u,\"world\":%llu,\"updates\":[%llu,%llu],\"failed\":%llu,\"dead\":[%u,%u],\"retry\":%u,\"lives\":%u,\"transport\":[%u,%u,%u,%u,%u],\"withdrawals\":[%llu,%llu],\"rejoins\":[%llu,%llu],\"players\":[[%d,%d,%d,%d,%d,%d],[%d,%d,%d,%d,%d,%d]]}",
         s_on,C.initialized,C.anchor,C.menu,C.pauser,(unsigned long long)C.world_updates,(unsigned long long)C.updates[0],(unsigned long long)C.updates[1],(unsigned long long)C.failures,C.player[0].dead,C.player[1].dead,C.retry,R(0xA1),
+        C.withdrawn,C.teleport[0],C.teleport[1],C.select_hold[0],C.select_hold[1],(unsigned long long)C.withdrawals[0],(unsigned long long)C.withdrawals[1],(unsigned long long)C.rejoins[0],(unsigned long long)C.rejoins[1],
         personal(&C.player[0],0x330),personal(&C.player[0],0x378),personal(&C.player[0],0xB0)&31,personal(&C.player[0],0x32),personal(&C.player[0],0x30),personal(&C.player[0],0x348),
         personal(&C.player[1],0x330),personal(&C.player[1],0x378),personal(&C.player[1],0xB0)&31,personal(&C.player[1],0x32),personal(&C.player[1],0x30),personal(&C.player[1],0x348));
 }

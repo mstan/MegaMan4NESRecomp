@@ -236,7 +236,7 @@ void mm4_proto_body(Mm4ProtoBody *b) {
     if(S.teleport) {
         b->pose=CYC_PROTO_TELEPORT;
         b->y-=(S.teleport<=16?S.teleport-1:32-S.teleport)*16;
-    } else if(state==0x0a) {
+    } else if(state==0x08 || state==0x0a) {
         /* Animation33 is the native blinking READY text owned by actor0.
          * Entry13 emits beam12, full13, beam12, partial14, partial14. */
         if(R(0x558)==0x33)b->active=0;
