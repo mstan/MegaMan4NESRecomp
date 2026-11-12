@@ -2,9 +2,12 @@
 #include "mm4_coop.h"
 #include "mm4_world.h"
 #include "mm4_proto.h"
+#include "mm4_wide.h"
 
 #include "cyc_mod.h"
+#include "cyc_ring.h"
 #include "cyc_render.h"
+#include "cyc_video.h"
 #include "mod_function_hooks.h"
 #include "mod_runtime.h"
 #include "mod_savestate.h"
@@ -24,9 +27,12 @@ typedef struct {
     uint8_t retry,retry_ammo[2][13],waited[2];
 } Coop;
 static Coop C;
-static int s_on,s_roster,s_scope,s_personal_bhv,s_collision,s_death_wait;
+static int s_on,s_roster,s_scope,s_personal_bhv,s_collision,s_death_wait,s_view;
 static uint16_t s_addr[PERSONAL_CAP],s_index[2048];
 static int s_count;
+typedef struct {uint32_t frame;uint16_t address;uint8_t seat,value;} TestPoke;
+static TestPoke s_test_pokes[64];
+static int s_test_poke_count;
 typedef struct {const char *id;int enabled;} HookSetting;
 static HookSetting s_hooks[128];
 static int s_hook_count;
@@ -34,6 +40,29 @@ static int s_hook_count;
 int mm4_coop_enabled(void) { return s_on; }
 int mm4_coop_seat(void) { return s_on?C.current:0; }
 int mm4_coop_character(void) { return s_on?(s_roster^C.current):-1; }
+int mm4_coop_character_at(int seat) {return s_on && seat>=0 && seat<2?(s_roster^seat):0;}
+int mm4_coop_live(int seat) {return s_on && C.initialized && seat>=0 && seat<2 && !C.player[seat].dead;}
+int mm4_coop_view_mode(void) {return s_on?s_view:0;}
+int mm4_coop_independent(void) {return s_on && s_view!=0;}
+int mm4_coop_scene_locked(void) {return C.scene_active || R(0x19) || R(0x1A) || R(0x30)>=8;}
+void mm4_coop_view_set(int mode) {
+    if(mode<0 || mode>3)return;
+    s_view=mode;mm4_view_coop(s_on);mm4_wide_views_changed();
+    cyc_video_override_width(mm4_coop_independent()?(s_view==1?512:256):0);
+}
+int mm4_coop_view_rects(int left[2]) {
+    if(!s_on || !C.initialized || R(0x22)!=C.stage)return 0;
+    int camera=(R(0xF9)<<8)|R(0xFC),start=R(0xF9)-R(0x2E);
+    for(int seat=0;seat<2;seat++) {
+        int who=C.player[seat].dead?C.anchor:seat;left[seat]=camera;
+        if(!mm4_coop_scene_locked() && !(R(0x2B)&0xC0) && start>=0) {
+            int x=(mm4_coop_read(who,0x348)<<8)|mm4_coop_read(who,0x330);
+            int lo=start*256,hi=(start+R(0x2D))*256;
+            left[seat]=x-128;if(left[seat]<lo)left[seat]=lo;if(left[seat]>hi)left[seat]=hi;
+        }
+    }
+    return 2;
+}
 int mm4_coop_native_scope(void) { return s_on && s_scope; }
 int mm4_coop_menu_active(void) { return s_on && C.menu; }
 static void addresses(void) {
@@ -56,6 +85,19 @@ static void capture(Player *p) { for(int i=0;i<s_count;i++)p->ram[i]=R(s_addr[i]
 static void project(const Player *p) { for(int i=0;i<s_count;i++)P(s_addr[i],p->ram[i]); }
 static int personal(const Player *p,int a) { int i=s_index[a];return i?p->ram[i-1]:R(a); }
 static void set_personal(Player *p,int a,int value) { int i=s_index[a];if(i)p->ram[i-1]=(uint8_t)value; }
+int mm4_coop_test_poke(const char *value) {
+    unsigned frame,seat,address,byte;int n=0;addresses();
+    if(!value || s_test_poke_count>=64 || sscanf(value,"%u:%u:%x:%x%n",&frame,&seat,&address,&byte,&n)!=4 || value[n] ||
+        seat>1 || address>=2048 || !s_index[address] || byte>255)return 0;
+    s_test_pokes[s_test_poke_count++]=(TestPoke){frame,(uint16_t)address,(uint8_t)seat,(uint8_t)byte};
+    nes_mod_set_local_only("MM4 personal RAM QA fixture",1);return 1;
+}
+static void test_pokes(void) {
+    for(int i=0;i<s_test_poke_count;i++)if(s_test_pokes[i].frame==cyc_ring_frame) {
+        const TestPoke *p=&s_test_pokes[i];set_personal(&C.player[p->seat],p->address,p->value);
+        if(p->seat==C.current)P(p->address,p->value);
+    }
+}
 int mm4_coop_read(int seat,uint16_t a) {
     if(a>=2048 || seat<0 || seat>1)return 0;
     return C.initialized && seat!=C.current?personal(&C.player[seat],a):R(a);
@@ -163,6 +205,7 @@ static int controller(uint16_t address) {
     }
     if(C.menu || R(0x22)>=16)return 0;
     C.current=C.anchor;capture(&C.player[C.anchor]);
+    test_pokes();
     if(!private_step(C.anchor^1))C.failures++;
     C.current=C.anchor;P(0x14,C.raw[C.anchor]&~C.player[C.anchor].previous&~0x30);P(0x16,C.raw[C.anchor]&~0x30);
     P(0x15,0);P(0x17,0);return 0;
@@ -238,6 +281,14 @@ static int after_world(uint16_t address){
      * Give that seat its original decrement before projecting the survivor. */
     if(!dead_step(C.anchor))C.failures++;
     C.current=C.anchor=(uint8_t)other;project(&C.player[other]);
+    if(mm4_coop_independent() && !(R(0x2B)&0xC0) && !mm4_coop_scene_locked()) {
+        int previous=(R(0xF9)<<8)|R(0xFC),camera=center_camera();
+        /* The survivor is the real native player immediately. Its source
+         * camera and previous-body probes must transfer before the original
+         * scroll/draw pass can treat that distant body as an offscreen actor. */
+        P(0x25,R(0xFC));P(0x27,R(0x330));P(0x28,R(0x348));
+        P(0x2F,(R(0x2F)&~1)|(camera>=previous));
+    }
     if(!mm4_controls_art(R(0xA0)))C.failures++;P(0x18,255);
     P(0x14,C.fresh[other]&~0x30);P(0x16,C.raw[other]&~0x30);P(0x15,0);P(0x17,0);return 0;
 }
@@ -368,6 +419,7 @@ void mm4_coop_set(int enabled,int roster) {
     s_on=enabled!=0;s_roster=roster!=0;C.initialized=0;C.current=C.anchor=0;C.pending_pause=255;
     for(int i=0;i<sizeof HOOKS/sizeof *HOOKS;i++)nes_mod_set_function_hook_enabled(HOOKS[i],s_on);
     nes_mod_set_local_only("MM4 personal co-op (unqualified netplay)",s_on);mm4_view_coop(s_on);
+    mm4_coop_view_set(s_view);
 }
 static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4C6",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
 static int valid(const uint8_t *in,int len) {

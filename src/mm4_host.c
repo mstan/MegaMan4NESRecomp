@@ -6,12 +6,16 @@
 #include "cyc_host_extras.h"
 #include "cyc_input.h"
 #include "cyc_ring.h"
+#include "cyc_tcp.h"
 #include "cyc_render.h"
 #include "cyc_mod.h"
 #include "logical_input.h"
 #include "mod_runtime.h"
 #include "mod_function_hooks.h"
 #include "mod_savestate.h"
+#ifdef CYC_WITH_RECOMP_UI
+#include "recomp_runtime_ui.h"
+#endif
 #include <stdlib.h>
 #include <string.h>
 
@@ -146,6 +150,11 @@ static void frame_end(void *ctx) {
 }
 static bool option(void *ctx,const char *name,const char *value) {
     (void)ctx;
+    if(!strcmp(name,"--coop-view")) {
+        int mode=!strcmp(value,"shared")?0:!strcmp(value,"split")?1:!strcmp(value,"player1")?2:!strcmp(value,"player2")?3:-1;
+        if(mode<0)return false;mm4_coop_view_set(mode);return true;
+    }
+    if(!strcmp(name,"--mm4-coop-poke"))return mm4_coop_test_poke(value)!=0;
     if(!strcmp(name,"--mm4-qa-entry")) {
         unsigned v[6];char tail;
         if(sscanf(value,"%u,%u,%u,%u,%u,%u%c",v,v+1,v+2,v+3,v+4,v+5,&tail)!=6 ||
@@ -213,6 +222,37 @@ static void activate_proto(void) {
     s_proto_mode=!strcmp(mode,"protoman");s_proto_start=!strcmp(start,"protoman");
     s_proto_on=mm4_proto_set(1,s_proto_mode,s_proto_start);
 }
+static void tcp_state(int id,const char *line) {
+    char view[16];
+    if(cyc_tcp_str(line,"view",view,sizeof view)) {
+        int mode=!strcmp(view,"shared")?0:!strcmp(view,"split")?1:!strcmp(view,"player1")?2:!strcmp(view,"player2")?3:-1;
+        if(mode<0 || !mm4_coop_enabled()){cyc_tcp_err(id,"view needs active co-op and shared|split|player1|player2");return;}
+        mm4_coop_view_set(mode);
+    }
+    char fields[1024];int n=snprintf(fields,sizeof fields,"\"view\":%d,",mm4_coop_view_mode());
+    mm4_coop_json(fields+n,sizeof fields-n);cyc_tcp_ok(id,fields);
+}
+static void tcp(void *ctx) {(void)ctx;cyc_tcp_register("mm4_state","MM4 co-op state and local view selection",tcp_state);}
+#ifdef CYC_WITH_RECOMP_UI
+static int menu_get(void *ctx,const RecompRuntimeUiItem *item,int *out) {
+    (void)ctx;if(strcmp(item->key,"mm4.coop_view"))return 0;
+    *out=mm4_coop_view_mode();return 1;
+}
+static int menu_set(void *ctx,const RecompRuntimeUiItem *item,int value) {
+    (void)ctx;if(strcmp(item->key,"mm4.coop_view") || !mm4_coop_enabled() || value<0 || value>3)return 0;
+    mm4_coop_view_set(value);return mm4_coop_view_mode()==value;
+}
+static int menu_enabled(void *ctx,const RecompRuntimeUiItem *item) {
+    (void)ctx;return !strcmp(item->key,"mm4.coop_view") && mm4_coop_enabled();
+}
+static const char *const view_choices[]={"Shared screen","Independent split screen","Player one","Player two"};
+static const RecompRuntimeUiItem menu_items[]={
+    {.key="mm4.coop_view",.section="Display",.label="Two-player view",
+     .description="Choose a shared screen, two independent panes, or one player's view.",
+     .type=RECOMP_RUNTIME_UI_CHOICE,.minimum=0,.maximum=3,.step=1,.choices=view_choices,.choice_count=4}
+};
+static const RecompRuntimeUiCallbacks menu_callbacks={.get_value=menu_get,.set_value=menu_set,.is_enabled=menu_enabled};
+#endif
 NES_MOD_CONSTRUCTOR(register_mm4_controls) {
     mm4_proto_register();
     mm4_wide_register();
@@ -230,6 +270,8 @@ const CycHostExtras *cyc_host_extras(void) {
     static const CycInputProfile profile={.id="megaman-weapons-1",.game_label={"Previous weapon (L)","Next weapon (R)"},
         .game_pad={"leftshoulder","rightshoulder"},.shortcut_pad={"none","leftstick+rightstick",NULL,NULL,NULL,NULL,NULL}};
     static const CycHostOption options[]={{"--weapon-cycle",true,"on|off: cycle acquired weapons and helpers with L/R"},
+        {"--coop-view",true,"shared|split|player1|player2: local co-op presentation"},
+        {"--mm4-coop-poke",true,"FRAME:SEAT:HEX_ADDRESS:HEX_VALUE: personal QA prerequisite"},
         {"--mm4-qa-entry",true,"stage,page,room,art,palette,checkpoint: one-time native QA entry"},
         {"--mm4-controls-log",true,"FILE: per-frame control state for QA"},
         {"--protoman",true,"on|off: solo Proto Man and Select swapping"},
@@ -240,7 +282,11 @@ const CycHostExtras *cyc_host_extras(void) {
         {"--world-audit",true,"FILE: compare decoded terrain to the native viewport"},
         {"--coop",true,"on|off: development native personal co-op"},
         {"--coop-roster",true,"megaman-protoman|protoman-megaman: player order"}};
-    static const CycHostExtras extras={.power_on=power,.frame_end=frame_end,.input=input,.option=option,
-        .options=options,.option_count=sizeof options/sizeof *options,.input_profile=&profile};
+    static const CycHostExtras extras={.power_on=power,.frame_end=frame_end,.input=input,.option=option,.tcp_setup=tcp,
+        .options=options,.option_count=sizeof options/sizeof *options,.input_profile=&profile,
+#ifdef CYC_WITH_RECOMP_UI
+        .menu_items=menu_items,.menu_item_count=sizeof menu_items/sizeof *menu_items,.menu_callbacks=&menu_callbacks,
+#endif
+    };
     return &extras;
 }

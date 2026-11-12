@@ -4,6 +4,14 @@
 int mm4_coop_enabled(void);
 int mm4_coop_seat(void);
 int mm4_coop_character(void);
+int mm4_coop_character_at(int seat);
+int mm4_coop_live(int seat);
+int mm4_coop_independent(void);
+int mm4_coop_view_mode(void);
+void mm4_coop_view_set(int mode);
+int mm4_coop_view_rects(int left[2]);
+int mm4_coop_scene_locked(void);
+int mm4_coop_test_poke(const char *value);
 int mm4_coop_native_scope(void);
 int mm4_coop_menu_active(void);
 int mm4_coop_read(int seat,uint16_t address);

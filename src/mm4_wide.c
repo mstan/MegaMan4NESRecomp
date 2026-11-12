@@ -1,6 +1,8 @@
 /* Widen the native authored world, retaining its actors and spawn identities. */
 #include "mm4_wide.h"
 #include "mm4_world.h"
+#include "mm4_coop.h"
+#include "mm4_proto.h"
 #include "cyc_mod.h"
 #include "cyc_render.h"
 #include "cyc_video.h"
@@ -11,27 +13,38 @@
 #include <string.h>
 #define R(a) cyc_mod_peek((uint16_t)(a))
 #define P(a,v) cyc_mod_poke((uint16_t)(a),(uint8_t)(v))
-enum { MAX_PARTS = 512 };
+enum { MAX_PARTS = 24*63 };
 typedef struct { int16_t x,y; uint8_t owner,attr,pixels[64]; } WidePart;
 typedef struct {
     uint8_t valid,rank[24],next_rank,reserved;
     uint16_t count,width,camera,left,room_left,room_right;
+    Mm4ProtoBody body;
     WidePart parts[MAX_PARTS];
 } WideFrame;
 typedef struct {
     char magic[4]; uint8_t enabled,reserved[3];
     uint64_t spawns,rendered,full,failed;
     WideFrame build,frame;
+    uint8_t seen_stage,seen[128];
 } WideState;
 static WideState S;
 static int s_on;
+static int in_views(int x,int radius) {
+    int left[2];if(!mm4_coop_independent() || !mm4_coop_view_rects(left))return 0;
+    return (x+radius>=left[0] && x-radius<left[0]+256) || (x+radius>=left[1] && x-radius<left[1]+256);
+}
+static void seen_stage(void) {
+    if(S.seen_stage!=R(0x22)){memset(S.seen,0,sizeof S.seen);S.seen_stage=R(0x22);}
+}
 
 static int geometry(int width, int *camera, int *left, int *lo, int *hi) {
-    if (!s_on || width <= 256 || width > CYC_VIDEO_MAX_WIDTH || R(0x22) >= 16 || R(0x19) || R(0x1A) ||
+    int independent=mm4_coop_independent();
+    if ((!s_on && !independent) || (!independent && width <= 256) || width > CYC_VIDEO_MAX_WIDTH || R(0x22) >= 16 || R(0x19) || R(0x1A) ||
         (R(0x2B)&0xC0) || R(0x30)==10 || R(0x300)!=1) return 0;
     int page = R(0xF9), start = page - R(0x2E);
     if (start < 0 || R(0x2D) > 15) return 0;
     *camera = page * 256 + R(0xFC); *lo = start * 256; *hi = (start + R(0x2D) + 1) * 256;
+    if(independent){int views[2];if(!mm4_coop_view_rects(views))return 0;*left=views[0]<views[1]?views[0]:views[1];return 1;}
     *left = *camera - (width - 256) / 2;
     if (*left < *lo) *left = *lo;
     if (*hi - *lo >= width && *left + width > *hi) *left = *hi - width;
@@ -39,12 +52,16 @@ static int geometry(int width, int *camera, int *left, int *lo, int *hi) {
 }
 void mm4_wide_begin(void) {
     memset(&S.build,0,sizeof S.build); memset(S.build.rank,255,sizeof S.build.rank); S.build.next_rank = 1;
-    int camera,left,lo,hi,width = cyc_video_width();
-    if (!geometry(width,&camera,&left,&lo,&hi)) return;
+    int camera,left,lo,hi,width = mm4_coop_independent()?256:cyc_video_width();
+    if (!geometry(width,&camera,&left,&lo,&hi)) {
+        if(!mm4_coop_independent() || R(0x22)>=16 || R(0x300)!=1)return;
+        camera=(R(0xF9)<<8)|R(0xFC);left=lo=camera;hi=camera+256;
+    }
     S.build.valid=1; S.build.width=(uint16_t)width; S.build.camera=(uint16_t)camera;
     S.build.left=(uint16_t)left; S.build.room_left=(uint16_t)lo; S.build.room_right=(uint16_t)hi;
 }
 void mm4_wide_latch(void) { S.frame=S.build; }
+int mm4_wide_camera(void) {return S.frame.camera;}
 static int actor(uint16_t address) {
     (void)address;
     if (!S.build.valid || cyc_mod_isolated()) return 0;
@@ -52,7 +69,10 @@ static int actor(uint16_t address) {
     if (slot>=24) return 0;
     S.build.rank[slot]=S.build.next_rank++;
     int wx=(R(0x348+slot)<<8)|R(0x330+slot), dx=wx-S.build.camera;
-    if (!slot || !R(0x300+slot) || (dx>=32 && dx<224) || wx+32<S.build.left || wx-32>=S.build.left+S.build.width) return 0;
+    int complete=mm4_coop_independent();
+    int visible=complete?in_views(wx,32):(wx+32>=S.build.left && wx-32<S.build.left+S.build.width);
+    int widened=slot && !(dx>=32 && dx<224) && visible && !(R(0x2B)&0xC0) && !mm4_coop_scene_locked();
+    if(!R(0x300+slot) || (!complete && !widened))return 0;
     if (!cyc_mod_isolate_begin()) { S.failed++; return 0; }
     int saved_count=S.build.count;
     int camera=wx-128; P(0xFC,camera); P(0xF9,camera>>8); P(0x96,slot); P(0x97,4);
@@ -63,6 +83,7 @@ static int actor(uint16_t address) {
     int ok=cyc_mod_call(0xDB72,&regs), count=R(0x97), n=0;
     uint8_t fields[30];
     for (int base=0x300;base<=0x5B8;base+=0x18) fields[n++]=R(base+slot);
+    if(complete && !slot){mm4_proto_body(&S.build.body);S.build.body.x+=(int16_t)(camera-S.build.camera);}
     if (!count) count=256;
     for (int offset=4;ok && offset<count;offset+=4) {
         int top=R(0x200+offset)+1;
@@ -74,31 +95,40 @@ static int actor(uint16_t address) {
         int tile=R(0x201+offset), table=cyc_render_line_sprite_table(top);
         for (int y=0;y<8;y++) {
             int row=(p->attr&128)?7-y:y, a=table+tile*16+row;
-            int low=cyc_render_chr(a),high=cyc_render_chr(a+8);
+            int low=slot<5?mm4_controls_pattern(R(0xA0),(unsigned)a):cyc_render_chr(a);
+            int high=slot<5?mm4_controls_pattern(R(0xA0),(unsigned)(a+8)):cyc_render_chr(a+8);
             for (int x=0;x<8;x++) { int bit=(p->attr&64)?x:7-x; p->pixels[y*8+x]=(uint8_t)(((low>>bit)&1)|(((high>>bit)&1)<<1)); }
         }
     }
     cyc_mod_isolate_end();
     if (!ok) { S.build.count=(uint16_t)saved_count; S.failed++; return 0; }
-    n=0; for (int base=0x300;base<=0x5B8;base+=0x18) P(base+slot,fields[n++]);
-    S.rendered++; return 1;
+    S.rendered++;
+    /* Only a widened culling pass commits the pure draw's fields. Near
+     * actors retain their original real-clock draw and animation. */
+    if(widened){n=0;for(int base=0x300;base<=0x5B8;base+=0x18)P(base+slot,fields[n++]);return 1;}
+    return 0;
 }
 static int spawn(uint16_t address) {
     (void)address;
     if (cyc_mod_isolated()) return 0;
     int camera,left,lo,hi;
-    if (!geometry(cyc_video_width(),&camera,&left,&lo,&hi) || !mm4_cart_ready()) return 0;
+    int width=mm4_coop_independent()?256:cyc_video_width();
+    if (!geometry(width,&camera,&left,&lo,&hi) || !mm4_cart_ready() || mm4_coop_scene_locked()) return 0;
     int stage=R(0x22),bank=stage|0x20;
+    seen_stage();
     for (int index=0;index<128;index++) {
         int screen=mm4_cart_prg(bank,0xB100+index);
         if (screen>=0x80) break; /* native sorted-list terminator; tail is other data */
         int wx=screen*256+mm4_cart_prg(bank,0xB180+index);
         int code=mm4_cart_prg(bank,0xB280+index), y=mm4_cart_prg(bank,0xB200+index);
-        if (code>=0xC0 || wx<lo || wx>=hi || wx+24<left || wx-24>=left+cyc_video_width() || y>=240) continue;
-        if (wx>=camera && wx<camera+256) continue; /* native traversal owns its rectangle */
+        int visible=mm4_coop_independent()?in_views(wx,24):(wx+24>=left && wx-24<left+width);
+        if (code>=0xC0 || y>=240)continue;
+        if(wx<lo || wx>=hi || !visible){S.seen[index]=0;continue;}
         int active=0,free_slot=0;
         for (int slot=8;slot<24;slot++) { if (!R(0x300+slot)) free_slot=1; else if (R(0x438+slot)==index) active=1; }
-        if (active || (R(0x100+(index>>3))&(0x80>>(index&7)))) continue;
+        if(active){S.seen[index]=1;continue;}
+        if (wx>=camera && wx<camera+256) continue; /* native traversal owns its rectangle */
+        if (S.seen[index] || (R(0x100+(index>>3))&(0x80>>(index&7)))) continue;
         if (!free_slot) { S.full++; continue; }
         if (!cyc_mod_isolate_begin()) { S.failed++; continue; }
         CycModRegs r; cyc_mod_regs(&r); P(0xF5,0x38);P(0xF6,bank);
@@ -109,9 +139,28 @@ static int spawn(uint16_t address) {
         if (found>=0) for (int base=0x300;base<=0x5B8;base+=0x18) fields[n++]=R(base+found);
         cyc_mod_isolate_end();
         if (!ok) S.failed++;
-        else if (found>=0) { n=0;for (int base=0x300;base<=0x5B8;base+=0x18) P(base+found,fields[n++]); S.spawns++; }
+        else if (found>=0) { n=0;for (int base=0x300;base<=0x5B8;base+=0x18) P(base+found,fields[n++]);S.seen[index]=1; S.spawns++; }
     }
     return 0;
+}
+static int authored(uint16_t address) {
+    (void)address;if(cyc_mod_isolated() || !mm4_cart_ready() || mm4_coop_scene_locked())return 0;
+    int camera,left,lo,hi,width=mm4_coop_independent()?256:cyc_video_width();
+    if(!geometry(width,&camera,&left,&lo,&hi))return 0;
+    CycModRegs r;cyc_mod_regs(&r);int index=r.y;if(index>=128)return 0;
+    int bank=R(0x22)|0x20;if(mm4_cart_prg(bank,0xB280+index)>=0xC0)return 0;
+    seen_stage();int wx=mm4_cart_prg(bank,0xB100+index)*256+mm4_cart_prg(bank,0xB180+index);
+    int visible=wx>=lo && wx<hi && (mm4_coop_independent()?in_views(wx,24):(wx+24>=left && wx-24<left+width));
+    if(!visible){S.seen[index]=0;return mm4_coop_independent();}
+    return S.seen[index]!=0;
+}
+static int born(uint16_t address) {
+    (void)address;if(cyc_mod_isolated() || R(0x22)>=16)return 0;
+    CycModRegs r;cyc_mod_regs(&r);if(r.x<8 || r.x>=24)return 0;
+    int index=R(0x438+r.x);if(index<128 && R(0x300+r.x)){seen_stage();S.seen[index]=1;}return 0;
+}
+static int clear(uint16_t address) {
+    (void)address;if(!cyc_mod_isolated()){memset(S.seen,0,sizeof S.seen);S.seen_stage=255;}return 0;
 }
 int mm4_wide_background(uint32_t *out,int width,int height,const uint32_t *native,uint8_t *opaque,int *origin) {
     if (!s_on || !S.frame.valid || width<=256 || width>CYC_VIDEO_MAX_WIDTH || height!=240 || !native) return 0;
@@ -155,12 +204,18 @@ int mm4_wide_background(uint32_t *out,int width,int height,const uint32_t *nativ
 }
 int mm4_wide_rank(int owner) { return owner>=0 && owner<24 && S.frame.valid?S.frame.rank[owner]:255; }
 void mm4_wide_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint8_t *claimed,int rank) {
-    if (!s_on || !S.frame.valid || width<=256) return;
+    int complete=mm4_coop_independent();
+    if ((!s_on && !complete) || !S.frame.valid || (!complete && width<=256)) return;
     /* This frame's origin is explicit. cyc_render_native_origin reports the
      * previously composed frame until the current compositor returns. */
     int left=S.frame.camera-origin;
+    int painted=0;
     for (int i=0;i<S.frame.count;i++) {
         const WidePart *p=&S.frame.parts[i];if (mm4_wide_rank(p->owner)!=rank) continue;
+        if(complete && !p->owner && S.frame.body.active) {
+            if(!painted){Mm4ProtoBody body=S.frame.body;body.x+=(int16_t)(S.frame.camera-left);mm4_view_draw_character(out,width,0,&body);painted=1;}
+            continue;
+        }
         for (int y=0;y<8;y++) for (int x=0;x<8;x++) {
             int v=p->pixels[y*8+x],px=p->x-left+x,py=p->y+y;
             if (!v || px<0 || px>=width || py<0 || py>=240) continue;
@@ -171,6 +226,11 @@ void mm4_wide_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
         }
     }
 }
+void mm4_wide_views_changed(void) {
+    int active=s_on || mm4_coop_independent();
+    nes_mod_set_function_hook_enabled("mm4.wide.actor",active);nes_mod_set_function_hook_enabled("mm4.wide.spawn",active);
+    nes_mod_set_function_hook_enabled("mm4.wide.authored",active);nes_mod_set_function_hook_enabled("mm4.wide.born",active);nes_mod_set_function_hook_enabled("mm4.wide.clear",active);
+}
 void mm4_wide_set(int enabled,const char *aspect) {
     s_on=enabled!=0;
     int mode=NES_VIDEO_FIT;
@@ -179,17 +239,18 @@ void mm4_wide_set(int enabled,const char *aspect) {
     else if (aspect && !strcmp(aspect,"32-9")) mode=NES_VIDEO_32_9;
     else if (aspect && !strcmp(aspect,"stock")) mode=NES_VIDEO_STOCK;
     cyc_video_set_mode(s_on?mode:NES_VIDEO_STOCK);
-    nes_mod_set_function_hook_enabled("mm4.wide.actor",s_on);nes_mod_set_function_hook_enabled("mm4.wide.spawn",s_on);
+    mm4_wide_views_changed();
     nes_mod_set_local_only("MM4 widened world (unqualified netplay)",s_on);
     mm4_view_wide(s_on);
 }
-void mm4_wide_power(void) { memset(&S,0,sizeof S); }
-static int get(uint8_t *out,int cap) { if (cap<sizeof S)return -1;memcpy(S.magic,"MX01",4);S.enabled=(uint8_t)s_on;memcpy(out,&S,sizeof S);return sizeof S; }
+void mm4_wide_power(void) { memset(&S,0,sizeof S);S.seen_stage=255; }
+static int get(uint8_t *out,int cap) { if (cap<sizeof S)return -1;memcpy(S.magic,"MX03",4);S.enabled=(uint8_t)s_on;memcpy(out,&S,sizeof S);return sizeof S; }
 static int valid(const uint8_t *in,int len) {
-    if (!len)return !s_on;
+    if (!len)return !(s_on || mm4_coop_independent());
     if (!in || len!=sizeof S)return 0;
     static WideState p;memcpy(&p,in,sizeof p);
-    if (memcmp(p.magic,"MX01",4) || p.enabled!=s_on)return 0;
+    if (memcmp(p.magic,"MX03",4) || p.enabled!=s_on || (p.seen_stage!=255 && p.seen_stage>=16))return 0;
+    for(int i=0;i<128;i++)if(p.seen[i]>1)return 0;
     const WideFrame *f[2]={&p.build,&p.frame};
     for(int j=0;j<2;j++) {
         if(f[j]->valid>1 || f[j]->count>MAX_PARTS || f[j]->width>CYC_VIDEO_MAX_WIDTH)return 0;
@@ -200,6 +261,7 @@ static int valid(const uint8_t *in,int len) {
 static int set(const uint8_t *in,int len) { if(!valid(in,len))return 0;if(len)memcpy(&S,in,sizeof S);else memset(&S,0,sizeof S);return 1; }
 void mm4_wide_register(void) {
     nes_mod_register_function_entry_plugin("mm4.wide.actor",0xDB72,actor);nes_mod_register_function_entry_plugin("mm4.wide.spawn",0x8000,spawn);
+    nes_mod_register_function_entry_plugin("mm4.wide.authored",0x8080,authored);nes_mod_register_function_entry_plugin("mm4.wide.born",0x817B,born);nes_mod_register_function_entry_plugin("mm4.wide.clear",0x85AD,clear);
     nes_mod_register_savestate_hook("mm4.wide",get,set);nes_mod_register_savestate_validator("mm4.wide",valid);
 }
 int mm4_wide_json(char *out,int cap) { return snprintf(out,cap,"\"wide\":{\"on\":%d,\"width\":%u,\"parts\":%u,\"spawns\":%llu,\"rendered\":%llu,\"full\":%llu,\"failed\":%llu}",s_on,S.frame.width,S.frame.count,(unsigned long long)S.spawns,(unsigned long long)S.rendered,(unsigned long long)S.full,(unsigned long long)S.failed); }

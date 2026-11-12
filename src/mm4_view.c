@@ -3,6 +3,7 @@
 #include "mm4_world.h"
 #include "mm4_wide.h"
 #include "mm4_coop.h"
+#include "mm4_hud.h"
 #include "cyc_mod.h"
 #include "cyc_render.h"
 #include "mod_function_hooks.h"
@@ -12,13 +13,32 @@
 typedef struct {
     char magic[4];
     uint8_t valid, owners[64];
+    uint8_t panels,native_scene;
+    int16_t left[2];
+    uint8_t tiles[2][30][33],palettes[2][30][33],present[2][30][33];
     Mm4ProtoBody body;
 } ViewFrame;
 static ViewFrame s_build, s_frame;
-static int s_enabled,s_wide,s_coop;
+static int s_enabled,s_wide,s_coop,s_capture_policy=-1,s_panel_drawing;
 static uint32_t s_bg[256 * 240];
 static uint8_t s_opaque[864 * 240], s_allowed[64][240];
 static uint8_t s_claimed[864 * 240];
+static uint32_t s_panel[2][256*240];
+static void panels_build(void) {
+    if(!mm4_coop_independent() || cyc_mod_peek(0x22)>=16)return;
+    int left[2];if(!mm4_coop_view_rects(left))return;
+    s_build.panels=1;
+    s_build.native_scene=(uint8_t)(mm4_coop_scene_locked() || (cyc_mod_peek(0x2B)&0xC0) || (cyc_mod_peek(0x132)&128));
+    int lo=(cyc_mod_peek(0xF9)-cyc_mod_peek(0x2E))*256,hi=lo+(cyc_mod_peek(0x2D)+1)*256;
+    for(int seat=0;seat<2;seat++) {
+        s_build.left[seat]=(int16_t)left[seat];
+        for(int y=0;y<30;y++)for(int x=0;x<33;x++) {
+            int wx=(left[seat]&~7)+x*8;Mm4WorldTile t;
+            if(wx<lo || wx>=hi || !mm4_world_tile(wx/256,wx&255,y*8,&t))continue;
+            s_build.tiles[seat][y][x]=t.tile;s_build.palettes[seat][y][x]=t.palette;s_build.present[seat][y][x]=1;
+        }
+    }
+}
 
 static int begin(uint16_t address) {
     (void)address;
@@ -26,6 +46,8 @@ static int begin(uint16_t address) {
     memset(&s_build, 0, sizeof s_build); memset(s_build.owners, 255, sizeof s_build.owners);
     mm4_wide_begin();
     mm4_coop_build();
+    panels_build();
+    mm4_hud_capture();
     return 0;
 }
 static int part(uint16_t address) {
@@ -43,6 +65,7 @@ static int dma(uint16_t address) {
     memcpy(&s_frame, &s_build, sizeof s_frame);
     mm4_wide_latch();
     mm4_coop_latch();
+    mm4_hud_latch();
     return 0;
 }
 static uint32_t color(int index, const Mm4ProtoBody *body) {
@@ -102,7 +125,7 @@ static void character_body(uint32_t *out, int W, int origin, const Mm4ProtoBody 
         int dx = x - p->origin_x, dy = y + p->top_y;
         int px = b->x + (b->right ? -dx - 1 : dx), py = b->y + (b->flipped ? -dy : dy + 1);
         if (origin + px < 0 || origin + px >= W || py < 0 || py >= 240 ||
-            !(cyc_render_line_mask(py) & 16) || (px < 8 && !(cyc_render_line_mask(py) & 4)) ||
+            !(cyc_render_line_mask(py) & 16) || (!s_panel_drawing && px < 8 && !(cyc_render_line_mask(py) & 4)) ||
             s_claimed[py * W + origin + px]) continue;
         int at = py * W + origin + px;
         s_claimed[at] = 1;
@@ -131,12 +154,45 @@ static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oa
         }
     }
 }
+static void panel_scene(uint32_t *out,int seat) {
+    int left=s_frame.left[seat],phase=left&7;
+    memset(s_claimed,0,256*240);memset(s_opaque,0,256*240);s_panel_drawing=1;
+    const uint8_t *opaque=cyc_frame_bg_opaque();
+    for(int y=0;y<240;y++)for(int x=0;x<256;x++) {
+        int at=y*256+x,v=0,cell=(phase+x)/8,bit=7-((phase+x)&7);
+        if(s_frame.native_scene){out[at]=s_bg[at];s_opaque[at]=opaque[at];continue;}
+        if(s_frame.present[seat][y/8][cell] && (cyc_render_line_mask(y)&8)) {
+            int a=cyc_render_line_bg_table(y)+s_frame.tiles[seat][y/8][cell]*16+(y&7);
+            v=((cyc_render_chr((uint16_t)a)>>bit)&1)|(((cyc_render_chr((uint16_t)(a+8))>>bit)&1)<<1);
+        }
+        out[at]=cyc_render_color(v?s_frame.palettes[seat][y/8][cell]*4+v:0);s_opaque[at]=(uint8_t)(v!=0);
+    }
+    int origin=mm4_wide_camera()-left;
+    for(int rank=1;rank<=24;rank++)mm4_wide_draw(out,256,origin,s_opaque,s_claimed,rank);
+    mm4_coop_draw(out,256,origin,s_opaque,s_claimed);
+    mm4_hud_draw(out,256,240,seat);s_panel_drawing=0;
+}
+static int panels(uint32_t *out,int width,int height) {
+    int mode=mm4_coop_view_mode();if(!mode || !s_frame.panels || width<256 || height!=240)return 0;
+    if(mode==1) {
+        panel_scene(s_panel[0],0);panel_scene(s_panel[1],1);int half=width/2;
+        for(int y=0;y<240;y++)for(int x=0;x<width;x++) {
+            int seat=x>=half,local=x-(seat?half:0),span=seat?width-half:half;
+            out[y*width+x]=s_panel[seat][y*256+local*256/span];
+        }
+    }else {
+        int seat=mode==3;panel_scene(s_panel[seat],seat);
+        for(int y=0;y<240;y++)for(int x=0;x<width;x++)out[y*width+x]=s_panel[seat][y*256+x*256/width];
+    }
+    cyc_render_set_native_origin(0);return 1;
+}
 static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *native, void *ctx) {
     (void)ctx; (void)native_x0;
     if(cyc_mod_peek(0x22)==16){
         int personal=s_coop?mm4_coop_menu_active():cyc_mod_peek(0x30)<=4;
         return personal?inventory(out,W,H,native):0;
     }
+    if(!mm4_coop_menu_active() && cyc_render_background(s_bg) && panels(out,W,H))return 1;
     if (cyc_mod_peek(0x22) >= 16 || cyc_mod_peek(0x19) || cyc_mod_peek(0x1A)) return 0;
     if (!(s_enabled || s_wide || s_coop) || W < 256 || W > 864 || H != 240 || !cyc_render_background(s_bg)) return 0;
     mm4_world_audit(s_bg);
@@ -173,15 +229,18 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
         int rank=mm4_wide_rank(owner);
         if(rank!=255)while(drawn_rank<rank)mm4_wide_draw(out,W,origin,s_opaque,s_claimed,++drawn_rank);
         if (replace && owner == 0) { if (slot == first) character_body(out, W, origin, &s_frame.body); }
-        else sprite(out, W, origin, slot, oam);
+        else if(!mm4_hud_native_meter(oam+slot*4))sprite(out, W, origin, slot, oam);
     }
     while(drawn_rank<24)mm4_wide_draw(out,W,origin,s_opaque,s_claimed,++drawn_rank);
     mm4_coop_draw(out,W,origin,s_opaque,s_claimed);
+    mm4_hud_draw(out,W,H,-1);
     cyc_render_set_native_origin(origin); return 1;
 }
 void mm4_view_power(void) {
     memset(&s_build, 0, sizeof s_build); memset(s_build.owners, 255, sizeof s_build.owners);
     memset(&s_frame, 0, sizeof s_frame); memset(s_frame.owners, 255, sizeof s_frame.owners);
+    mm4_hud_reset();
+    s_capture_policy=s_enabled || s_wide || s_coop;cyc_render_capture_background(s_capture_policy!=0);
 }
 static void refresh(void) {
     int active = s_enabled || s_wide || s_coop;
@@ -190,14 +249,14 @@ static void refresh(void) {
     nes_mod_set_function_hook_enabled("mm4.view.dma", active);
     cyc_render_set_compositor(active ? render : NULL, NULL);
     cyc_render_set_stock_compositing(active != 0);
-    cyc_render_capture_background(active != 0);
+    if(s_capture_policy!=active){cyc_render_capture_background(active!=0);s_capture_policy=active;}
 }
 void mm4_view_enable(int enabled) { s_enabled = enabled != 0; refresh(); }
 void mm4_view_wide(int enabled) {s_wide=enabled!=0;refresh();}
 void mm4_view_coop(int enabled) {s_coop=enabled!=0;refresh();}
 static int get(uint8_t *out, int cap) {
     if (cap < sizeof s_frame + sizeof s_build) return -1;
-    memcpy(s_build.magic, "MV01", 4); memcpy(s_frame.magic, "MV01", 4);
+    memcpy(s_build.magic, "MV02", 4); memcpy(s_frame.magic, "MV02", 4);
     memcpy(out, &s_build, sizeof s_build); memcpy(out + sizeof s_build, &s_frame, sizeof s_frame);
     return sizeof s_build + sizeof s_frame;
 }
@@ -207,9 +266,10 @@ static int valid(const uint8_t *in, int len) {
     ViewFrame frames[2]; memcpy(frames, in, sizeof frames);
     for (int i = 0; i < 2; ++i) {
         const Mm4ProtoBody *b = &frames[i].body;
-        if (memcmp(frames[i].magic, "MV01", 4) || frames[i].valid > 1 || b->pose >= CYC_PROTO_POSE_COUNT ||
+        if (memcmp(frames[i].magic, "MV02", 4) || frames[i].valid > 1 || frames[i].panels>1 || frames[i].native_scene>1 || b->pose >= CYC_PROTO_POSE_COUNT ||
             b->active > 1 || b->right > 1 || b->flipped > 1 || b->behind > 1 || b->weapon > 13) return 0;
         for (int j = 0; j < 64; ++j) if (frames[i].owners[j] != 255 && frames[i].owners[j] >= 24) return 0;
+        for(int s=0;s<2;s++)for(int y=0;y<30;y++)for(int x=0;x<33;x++)if(frames[i].palettes[s][y][x]>3 || frames[i].present[s][y][x]>1)return 0;
     }
     return 1;
 }
@@ -220,6 +280,7 @@ static int set(const uint8_t *in, int len) {
     return 1;
 }
 void mm4_view_register(void) {
+    mm4_hud_register();
     nes_mod_register_function_entry_plugin("mm4.view.begin", 0xDB3A, begin);
     nes_mod_register_function_entry_plugin("mm4.view.part", 0xDE39, part);
     nes_mod_register_function_entry_plugin("mm4.view.dma", 0xC065, dma);
