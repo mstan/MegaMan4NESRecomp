@@ -10,15 +10,22 @@
 #include <stdlib.h>
 static int s_sealed,s_applying,s_width=256;
 static unsigned s_cli;
+enum {CLI_COOP=1u<<0,CLI_VIEW=1u<<1,CLI_ROSTER=1u<<2,CLI_PROTO=1u<<3,
+      CLI_MODE=1u<<4,CLI_START=1u<<5,CLI_WEAPONS=1u<<6,CLI_WIDE=1u<<7,
+      CLI_LINES=1u<<8,CLI_QA=1u<<9};
 int mm4_net_locked(void) {return s_sealed && !s_applying;}
 int mm4_net_simulation_width(int local) {return s_sealed?s_width:local;}
 void mm4_net_note_option(const char *name) {
-    if(!strcmp(name,"--coop") || !strcmp(name,"--coop-view") || !strcmp(name,"--coop-roster"))s_cli|=1;
-    if(!strcmp(name,"--protoman") || !strcmp(name,"--proto-mode") || !strcmp(name,"--proto-start"))s_cli|=2;
-    if(!strcmp(name,"--weapon-cycle"))s_cli|=4;
-    if(!strcmp(name,"--wide") || !strcmp(name,"--aspect"))s_cli|=8;
-    if(!strcmp(name,"--slowdown-reduction"))s_cli|=32;
-    if(!strcmp(name,"--mm4-coop-poke") || !strcmp(name,"--mm4-qa-entry"))s_cli|=64;
+    if(!strcmp(name,"--coop"))s_cli|=CLI_COOP;
+    if(!strcmp(name,"--coop-view"))s_cli|=CLI_VIEW;
+    if(!strcmp(name,"--coop-roster"))s_cli|=CLI_ROSTER;
+    if(!strcmp(name,"--protoman"))s_cli|=CLI_PROTO;
+    if(!strcmp(name,"--proto-mode"))s_cli|=CLI_MODE;
+    if(!strcmp(name,"--proto-start"))s_cli|=CLI_START;
+    if(!strcmp(name,"--weapon-cycle"))s_cli|=CLI_WEAPONS;
+    if(!strcmp(name,"--wide"))s_cli|=CLI_WIDE;
+    if(!strcmp(name,"--slowdown-reduction"))s_cli|=CLI_LINES;
+    if(!strcmp(name,"--mm4-coop-poke") || !strcmp(name,"--mm4-qa-entry"))s_cli|=CLI_QA;
 }
 #ifdef NESRECOMP_NET
 #include "cyc_net.h"
@@ -39,11 +46,16 @@ static int option_is(const char *id,const char *feature,const char *key,const ch
 static Mm4Settings offer(void) {
     Mm4Settings c=mm4_host_settings();if(!cyc_session_mods_enabled())return c;
     const char *proto="mega-man-4-usa.character.protoman",*coop="mega-man-4-usa.coop";
-    if(!(s_cli&1)){c.coop=selected(coop,"coop");c.independent=!option_is(coop,"coop","coop-view","shared","shared");c.roster=option_is(coop,"coop","player-one","protoman","megaman");}
-    if(!(s_cli&2)){c.proto=selected(proto,"protoman") || c.coop;c.mode=option_is(proto,"protoman","mode","protoman","protoman");c.start=option_is(proto,"protoman","start","protoman","protoman");}
-    if(!(s_cli&4))c.weapons=selected("mega-man-4-usa.enhancement.weapons","weapons");
-    if(!(s_cli&8))c.wide=selected("mega-man-4-usa.enhancement.widescreen","widescreen");
-    if(!(s_cli&32))c.lines=selected("mega-man-4-usa.enhancement.slowdown","slowdown")?262:0;
+    if(!(s_cli&CLI_COOP))c.coop=selected(coop,"coop");
+    c.independent=(s_cli&CLI_VIEW)?mm4_coop_view_mode()!=0:!option_is(coop,"coop","coop-view","shared","shared");
+    if(!(s_cli&CLI_ROSTER))c.roster=option_is(coop,"coop","player-one","protoman","megaman");
+    if(!(s_cli&CLI_PROTO))c.proto=selected(proto,"protoman");
+    c.proto=c.proto || c.coop; /* co-op includes the character implementation */
+    if(!(s_cli&CLI_MODE))c.mode=option_is(proto,"protoman","mode","protoman","protoman");
+    if(!(s_cli&CLI_START))c.start=option_is(proto,"protoman","start","protoman","protoman");
+    if(!(s_cli&CLI_WEAPONS))c.weapons=selected("mega-man-4-usa.enhancement.weapons","weapons");
+    if(!(s_cli&CLI_WIDE))c.wide=selected("mega-man-4-usa.enhancement.widescreen","widescreen");
+    if(!(s_cli&CLI_LINES))c.lines=selected("mega-man-4-usa.enhancement.slowdown","slowdown")?262:0;
     return c;
 }
 static int catalog_supported(void) {
@@ -73,15 +85,15 @@ static int settings_get(char *out,int cap) {return describe(mm4_host_settings(),
 static int settings_offer(char *out,int cap) {s_offer=offer();return describe(s_offer,out,cap);}
 static int settings_apply(const char *value) {
     Mm4Settings c;int version,n=0;
-    if((s_cli&64) || !catalog_supported())return 0;
-    if(sscanf(value,"%d:%d:%d:%d:%d:%d:%d:%d:%d:%d%n",&version,&c.coop,&c.independent,&c.roster,&c.proto,&c.mode,&c.start,&c.weapons,&c.wide,&c.lines,&n)!=10 || value[n] || version!=1)return 0;
+    if((s_cli&CLI_QA) || !catalog_supported())return 0;
+    if(sscanf(value,"%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%3d%n",&version,&c.coop,&c.independent,&c.roster,&c.proto,&c.mode,&c.start,&c.weapons,&c.wide,&c.lines,&n)!=10 || value[n] || version!=1)return 0;
     if(c.coop!=1 || c.proto!=1 || c.independent<0 || c.independent>1 || c.roster<0 || c.roster>1 || c.mode<0 || c.mode>1 ||
         c.start<0 || c.start>1 || c.weapons<0 || c.weapons>1 || c.wide<0 || c.wide>1 || (c.lines!=0 && c.lines!=262) || (c.independent && s_width!=256))return 0;
     if(!s_saved){s_offline=mm4_host_settings();s_offline_offer=offer();s_offline_view=mm4_coop_view_mode();s_offline_video=cyc_video_mode();s_offline_width=cyc_video_width();s_saved=1;}
     s_applying=1;int ok=mm4_host_apply_settings(c,nes_netplay_local_slot());
     /* The online catalog defers activation plugins. Keep its local view
      * preference while the host's shared/independent class stays sealed. */
-    if(ok && c.independent && !(s_cli&1) && cyc_session_mods_enabled()) {
+    if(ok && c.independent && !(s_cli&CLI_VIEW) && cyc_session_mods_enabled()) {
         const char *coop="mega-man-4-usa.coop";
         if(option_is(coop,"coop","coop-view","split","shared"))mm4_coop_view_set(1);
         else if(option_is(coop,"coop","coop-view","p1","shared"))mm4_coop_view_set(2);
@@ -121,14 +133,14 @@ static void settings_restore(void) {
         s_saved=0;
     }
     nes_netplay_require_capabilities(0);nes_netplay_require_player_count(0);nes_netplay_set_input_player(-1);
-    nes_mod_set_local_only("MM4 unqualified simulation profile",0);s_cli=0;
+    nes_mod_set_local_only("MM4 unqualified simulation profile",0);
 }
 static int width_get(char *out,int cap) {return snprintf(out,cap,"%d",s_sealed?s_width:(mm4_coop_independent()?256:cyc_video_width()));}
 static int width_offer(char *out,int cap) {Mm4Settings c=offer();int w=c.independent?256:cyc_video_width();if(c.wide && !c.independent && w<=256)w=426;return snprintf(out,cap,"%d",w);}
 static int width_apply(const char *v) {char *end;long n=strtol(v,&end,10);if(end==v || *end || n<256 || n>CYC_VIDEO_MAX_WIDTH || (n&1))return 0;s_width=(int)n;return 1;}
 static int timing_get(char *out,int cap) {return snprintf(out,cap,"%d:%u",(int)cyc_region(),cyc_extra_scanlines());}
 static int timing_offer(char *out,int cap) {return snprintf(out,cap,"%d:%d",(int)cyc_region(),offer().lines);}
-static int timing_apply(const char *v) {int region;unsigned lines;char tail;return sscanf(v,"%d:%u%c",&region,&lines,&tail)==2 && region==(int)cyc_region() && (lines==0 || lines==262) && cyc_set_extra_scanlines(lines);}
+static int timing_apply(const char *v) {int region;unsigned lines;char tail;return sscanf(v,"%1d:%3u%c",&region,&lines,&tail)==2 && region==(int)cyc_region() && (lines==0 || lines==262) && cyc_set_extra_scanlines(lines);}
 static int sheet_get(char *out,int cap) {
     uint8_t digest[32];if(!mm4_proto_source_hash(digest))return 0;
     if(cap<65)return 0;for(int i=0;i<32;i++)snprintf(out+i*2,3,"%02x",digest[i]);return 64;
