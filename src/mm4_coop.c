@@ -3,6 +3,7 @@
 #include "mm4_world.h"
 #include "mm4_proto.h"
 #include "mm4_wide.h"
+#include "mm4_helpers.h"
 
 #include "cyc_mod.h"
 #include "cyc_ring.h"
@@ -120,6 +121,12 @@ static void test_pokes(void) {
 int mm4_coop_read(int seat,uint16_t a) {
     if(a>=2048 || seat<0 || seat>1)return 0;
     return C.initialized && (seat!=C.current || (A.active && !target_field(a)))?personal(&C.player[seat],a):R(a);
+}
+int mm4_coop_write(int seat,uint16_t a,uint8_t value) {
+    if(!s_on || !C.initialized || seat<0 || seat>1 || a>=2048 || !s_index[a])return 0;
+    C.player[seat].ram[s_index[a]-1]=value;
+    if(seat==C.current && (!A.active || target_field(a)))P(a,value);
+    return 1;
 }
 static void warp_follow(void) {
     int seat=C.anchor^1;Player *p=&C.player[seat];
@@ -265,6 +272,7 @@ static int private_step(int seat) {
     } else if(ok)ok=cyc_mod_call(0x8000,&r);
     if(ok) {P(0xf5,0x3a);P(0xf6,0x3b);ok=cyc_mod_call(0xff37,&r);}
     s_personal_bhv=1;if(ok)ok=cyc_mod_call(0x8003,&r);s_personal_bhv=0;
+    if(ok)ok=mm4_helpers_private_contact();
     if(ok){
         if(C.teleport[seat]==TELE_IN && R(0x30)!=10) {
             C.teleport[seat]=TELE_NONE;C.withdrawn&=(uint8_t)~(1u<<seat);C.rejoins[seat]++;
@@ -273,6 +281,7 @@ static int private_step(int seat) {
         capture(&C.player[seat]);snapshot_ram(after);C.updates[seat]++;C.player[seat].previous=C.raw[seat];
     }
     if(enabled)hooks(0);s_scope=0;cyc_mod_isolate_end();C.current=(uint8_t)owner;
+    mm4_helpers_commit(ok);
     if(ok)merge_world(before,after);return ok;
 }
 static void initialize(void) {
@@ -431,6 +440,8 @@ static int personal_end(uint16_t address) {
     /* The common collision tail jumps here. A scoped collision call has
      * finished; return to its caller before the native actor loop advances. */
     if(s_collision && cyc_mod_isolated())return 1;
+    if(s_on && C.initialized && !C.menu && !cyc_mod_isolated() && R(0xEB)==4)
+        if(!mm4_helpers_shared_contact())C.failures++;
     /* Finish the native loop at its common terrain-hazard check, after slot4.
      * Returning from here would incorrectly omit the player's spike checks. */
     if(s_on && s_scope && s_personal_bhv && R(0xEB)>=4)P(0xEB,23);

@@ -43,6 +43,7 @@ nesrecomp_add_cycle_game(MegaMan4Recomp
         "${CMAKE_SOURCE_DIR}/src/mm4_world.c"
         "${CMAKE_SOURCE_DIR}/src/mm4_wide.c"
         "${CMAKE_SOURCE_DIR}/src/mm4_coop.c"
+        "${CMAKE_SOURCE_DIR}/src/mm4_helpers.c"
         "${CMAKE_SOURCE_DIR}/src/mm4_hud.c"
         "${NESRECOMP_ROOT}/runner/cyc/cyc_protoman_atlas.c")
 target_include_directories(MegaMan4Recomp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_BINARY_DIR}" "${NESRECOMP_ROOT}/runner/src")

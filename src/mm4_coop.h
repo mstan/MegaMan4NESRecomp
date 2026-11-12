@@ -17,6 +17,8 @@ int mm4_coop_menu_active(void);
 /* Personal reads retain their seat during borrowed native actor AI; the
  * physical palette stays with the real anchor throughout that scope. */
 int mm4_coop_read(int seat,uint16_t address);
+/* Commit a helper's named personal result after restoring its native scope. */
+int mm4_coop_write(int seat,uint16_t address,uint8_t value);
 void mm4_coop_register(void);
 void mm4_coop_set(int enabled,int roster);
 void mm4_coop_power(void);
