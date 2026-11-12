@@ -14,6 +14,8 @@ int mm4_coop_scene_locked(void);
 int mm4_coop_test_poke(const char *value);
 int mm4_coop_native_scope(void);
 int mm4_coop_menu_active(void);
+/* Personal reads retain their seat during borrowed native actor AI; the
+ * physical palette stays with the real anchor throughout that scope. */
 int mm4_coop_read(int seat,uint16_t address);
 void mm4_coop_register(void);
 void mm4_coop_set(int enabled,int roster);

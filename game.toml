@@ -188,3 +188,15 @@ id = "mm4.coop.frame-end"
 addr = 0xC7CB
 length = 8
 crc32 = 0x30B40B49
+
+[[mod_function_hook]]
+id = "mm4.coop.target-begin"
+addr = 0x804F
+length = 8
+crc32 = 0x84F97756
+
+[[mod_function_hook]]
+id = "mm4.coop.target-end"
+addr = 0x8097
+length = 8
+crc32 = 0x84C2EF43
