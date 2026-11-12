@@ -1,0 +1,8 @@
+# Acquire Skull as a prerequisite, then equip it with a real L press.
+# Player two retains Buster and must finish the native boss through the base route.
+INCLUDE coop-boss.route
+2960 POKE 00BD 9C
+2961 X1:L
+2962 X1:-
+2975 SAVESTATE before_equipment_handoff
+2977 SAVESTATE promoted_equipment

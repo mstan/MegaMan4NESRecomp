@@ -164,6 +164,10 @@ static int other_collision(int seat,int actor) {
         /* The winning seat owns the original victory/weapon-get script.
          * Keep the live CPU, stack, banks and shared world on their real clock. */
         capture(&C.player[owner]);C.anchor=C.current=(uint8_t)seat;project(&C.player[seat]);
+        /* Physical CHR and the next native palette upload must belong to
+         * the promoted seat as well as its personal CPU RAM. */
+        if(!mm4_controls_art(R(0xA0)))C.failures++;
+        P(0x18,255);
         P(0x14,C.fresh[seat]&~0x30);P(0x16,C.raw[seat]&~0x30);P(0x15,0);P(0x17,0);
     }
     return ok;
