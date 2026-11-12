@@ -2,6 +2,20 @@
 #include "mm4_proto.h"
 #include "mm4_coop.h"
 #include "mm4_proto_sheet.h"
+#include "mm4_net.h"
+#ifdef NESRECOMP_NET
+#include "nes_netplay_identity.h"
+#endif
+int mm4_proto_source_hash(uint8_t out[32]) {
+#ifdef NESRECOMP_NET
+    uint8_t both[64];nes_sha256(MM4_PROTO_PNG,sizeof MM4_PROTO_PNG,both);
+    nes_sha256(MM4_PROTO_JUMP_PNG,sizeof MM4_PROTO_JUMP_PNG,both+32);
+    nes_sha256(both,sizeof both,out);return 1;
+#else
+    (void)out;return 0;
+#endif
+}
+
 #include "cyc_mod.h"
 #include "cyc_ring.h"
 #include "mod_runtime.h"

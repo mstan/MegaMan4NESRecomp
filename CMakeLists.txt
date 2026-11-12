@@ -5,6 +5,7 @@ set(CMAKE_CXX_STANDARD 17)
 set(NESRECOMP_GAME_VERSION "0.1.0-development" CACHE STRING "Game release version")
 set(NESRECOMP_ROOT "${CMAKE_SOURCE_DIR}/nesrecomp" CACHE PATH "NESRecomp checkout")
 set(NESRECOMP_BACKEND "cycle" CACHE STRING "CPU backend")
+option(MM4_NETPLAY_QUALIFIED "Enable the qualified two-player simulation profile" OFF)
 set(NESRECOMP_ROM "" CACHE FILEPATH "Original Mega Man 4 USA ROM")
 if(NOT NESRECOMP_BACKEND STREQUAL "cycle")
     message(FATAL_ERROR "Mega Man 4 requires the cycle backend")
@@ -32,11 +33,12 @@ nesrecomp_add_cycle_game(MegaMan4Recomp
     GAME_CONFIG "${CMAKE_SOURCE_DIR}/game.toml"
     SEED_FILE "${CMAKE_SOURCE_DIR}/cyc_seeds_usa.txt"
     GAME_ID "mega-man-4-usa"
-    PLAYERS 1
+    PLAYERS 2
     REGION NTSC
     MODS GAME_ID "mega-man-4-usa"
     HOST_EXTRAS "${CMAKE_SOURCE_DIR}/src/mm4_host.c"
         "${CMAKE_SOURCE_DIR}/src/mm4_proto.c"
+        "${CMAKE_SOURCE_DIR}/src/mm4_net.c"
         "${CMAKE_SOURCE_DIR}/src/mm4_view.c"
         "${CMAKE_SOURCE_DIR}/src/mm4_world.c"
         "${CMAKE_SOURCE_DIR}/src/mm4_wide.c"
@@ -44,5 +46,6 @@ nesrecomp_add_cycle_game(MegaMan4Recomp
         "${CMAKE_SOURCE_DIR}/src/mm4_hud.c"
         "${NESRECOMP_ROOT}/runner/cyc/cyc_protoman_atlas.c")
 target_include_directories(MegaMan4Recomp PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src" "${CMAKE_CURRENT_BINARY_DIR}" "${NESRECOMP_ROOT}/runner/src")
+target_compile_definitions(MegaMan4Recomp PRIVATE MM4_NETPLAY_QUALIFIED=$<BOOL:${MM4_NETPLAY_QUALIFIED}>)
 add_custom_command(TARGET MegaMan4Recomp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/mods/preloaded" "$<TARGET_FILE_DIR:MegaMan4Recomp>/mods")

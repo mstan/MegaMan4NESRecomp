@@ -3,6 +3,8 @@
 #include "mm4_world.h"
 #include "mm4_wide.h"
 #include "mm4_coop.h"
+#include "mm4_net.h"
+#include "cyc_core.h"
 #include "cyc_host_extras.h"
 #include "cyc_input.h"
 #include "cyc_ring.h"
@@ -25,6 +27,7 @@ static Controls s_players[2];
 static int s_on;
 static int s_proto_on,s_proto_mode=1,s_proto_start=1;
 static int s_coop,s_roster;
+static unsigned s_extra_lines;
 static uint8_t *s_cart;
 static size_t s_cart_size;
 static FILE *s_log;
@@ -53,7 +56,25 @@ static uint8_t prg(unsigned bank,unsigned address) {
 unsigned mm4_cart_prg(unsigned bank,unsigned address) {return prg(bank,address);}
 int mm4_cart_ready(void) {return s_cart!=NULL;}
 void mm4_controls_refresh(void) {nes_mod_set_function_hook_enabled("mm4.player.dispatch",s_on || mm4_proto_enabled());}
-static void enabled(int on) {s_on=on!=0;for(int i=0;i<2;i++)s_players[i].pending=s_players[i].previous=0;mm4_controls_refresh();}
+static void enabled(int on) {s_on=on!=0;nes_mod_set_local_only("MM4 weapon switching (unqualified netplay)",s_on);for(int i=0;i<2;i++)s_players[i].pending=s_players[i].previous=0;mm4_controls_refresh();}
+
+static void timing(unsigned lines) {
+    s_extra_lines=lines;
+    if(!lines || cyc_extra_scanlines_supported())cyc_set_extra_scanlines(lines);
+    if(!mm4_net_locked())nes_mod_set_local_only("MM4 CPU budget (unqualified netplay)",lines!=0);
+}
+static void loaded(void *ctx) {(void)ctx;timing(s_extra_lines);}
+Mm4Settings mm4_host_settings(void) {
+    Mm4Settings c={s_coop,mm4_coop_independent(),s_roster,mm4_proto_enabled(),s_proto_mode,s_proto_start,s_on,s_wide,(int)s_extra_lines};return c;
+}
+int mm4_host_apply_settings(Mm4Settings c,int local_seat) {
+    s_coop=c.coop;s_roster=c.roster;s_proto_on=c.proto;s_proto_mode=c.mode;s_proto_start=c.start;s_wide=c.wide;
+    if(!mm4_proto_set(c.proto,c.mode,c.start))return 0;
+    enabled(c.weapons);mm4_wide_set(c.wide,"fit");timing((unsigned)c.lines);
+    int view=mm4_coop_view_mode();mm4_coop_set(c.coop,c.roster);
+    mm4_coop_view_set(c.independent?(view?view:(local_seat==1?3:2)):0);return 1;
+}
+static void activate_slowdown(void) {if(!mm4_net_locked())timing(262);}
 
 /* Native DA05's graphics packets contain bank, page count, source page and
  * destination PPU page. Decode the same user-owned bytes without executing
@@ -80,12 +101,13 @@ static int graphics(int weapon,int commit) {
     }
     return 0;
 }
-static int safe(void) {
-    unsigned state=ram(0x30);
-    return ram(0x22)<0x10 && ram(0x300)==1 && (ram(0xb0)&31) &&
+static int safe_for_seat(int seat) {
+    unsigned state=mm4_coop_read(seat,0x30);
+    return ram(0x22)<0x10 && mm4_coop_read(seat,0x300)==1 && (mm4_coop_read(seat,0xb0)&31) &&
         (state==0 || state==1 || state==3 || state==4) &&
-        !(ram(0x19)|ram(0x1a)|ram(0x13a)|ram(0x13c)|ram(0x13d));
+        !(ram(0x19)|ram(0x1a)|mm4_coop_read(seat,0x13a)|mm4_coop_read(seat,0x13c)|mm4_coop_read(seat,0x13d));
 }
+static int safe(void) {return safe_for_seat(mm4_coop_seat());}
 int mm4_controls_art(int weapon) {return weapon>=0 && weapon<=13 && graphics(weapon,0) && graphics(weapon,1);}
 int mm4_controls_pattern(int weapon,unsigned address) {
     if(weapon<0 || weapon>13 || !s_cart)return cyc_render_chr((uint16_t)address);
@@ -129,13 +151,18 @@ static void input(void *ctx,uint8_t buttons[2]) {
     for(int seat=0;seat<2;seat++) {
         Controls *state=&s_players[seat];
         unsigned held=seat && !mm4_coop_enabled()?0:nes_input_game_buttons(seat+1)&(CYC_GAME_L|CYC_GAME_R);
-        state->pending=(uint8_t)(s_on && held!=(CYC_GAME_L|CYC_GAME_R)?held&~state->previous:0);
+        unsigned fresh=held&~state->previous;
         state->previous=(uint8_t)held;
+        /* Keep a safe edge until the native controller consumes it. An
+         * output-only lag frame must not turn a held new press into no edge.
+         * Unsafe frames and simultaneous L+R discard it without queuing. */
+        if(!s_on || held==(CYC_GAME_L|CYC_GAME_R) || !safe_for_seat(seat))state->pending=0;
+        else state->pending|=(uint8_t)fresh;
     }
     mm4_coop_input(buttons);
 }
 static void power(void *ctx) {
-    (void)ctx;memset(s_players,0,sizeof s_players);mm4_coop_power();mm4_proto_power();mm4_wide_power();
+    (void)ctx;memset(s_players,0,sizeof s_players);mm4_coop_power();mm4_proto_power();mm4_wide_power();timing(s_extra_lines);
     free(s_cart);s_cart=NULL;s_cart_size=cyc_mod_copy_cart_payload(NULL,0);
     if(s_cart_size==0x80000) {
         s_cart=(uint8_t*)malloc(s_cart_size);
@@ -143,16 +170,22 @@ static void power(void *ctx) {
     }
 }
 static void frame_end(void *ctx) {
-    (void)ctx;for(int i=0;i<2;i++)s_players[i].pending=0;mm4_proto_end();mm4_coop_end();
-    char fields[512],wide[256],coop[512];mm4_proto_json(fields,sizeof fields);mm4_wide_json(wide,sizeof wide);mm4_coop_json(coop,sizeof coop);
-    if(s_log)fprintf(s_log,"{\"frame\":%u,\"weapon\":%u,\"held\":%u,\"changes\":%llu,\"hp\":%u,\"state\":%u,\"stage\":%u,\"charge\":%u,%s,%s,%s}\n",
-        cyc_ring_frame,ram(0xa0),S.previous,(unsigned long long)S.changes,ram(0xb0),ram(0x30),ram(0x22),ram(0x35),fields,wide,coop);
+    (void)ctx;mm4_proto_end();mm4_coop_end();
+    char fields[512],wide[256],coop[512],timing_fields[64];
+    snprintf(timing_fields,sizeof timing_fields,"\"timing\":{\"extra_lines\":%u}",cyc_extra_scanlines());mm4_proto_json(fields,sizeof fields);mm4_wide_json(wide,sizeof wide);mm4_coop_json(coop,sizeof coop);
+    if(s_log)fprintf(s_log,"{\"frame\":%u,\"weapon\":%u,\"held\":%u,\"changes\":%llu,\"hp\":%u,\"state\":%u,\"stage\":%u,\"charge\":%u,%s,%s,%s,%s}\n",
+        cyc_ring_frame,ram(0xa0),S.previous,(unsigned long long)S.changes,ram(0xb0),ram(0x30),ram(0x22),ram(0x35),fields,wide,coop,timing_fields);
 }
 static bool option(void *ctx,const char *name,const char *value) {
-    (void)ctx;
+    (void)ctx;mm4_net_note_option(name);
+    if(mm4_net_locked() && strcmp(name,"--coop-view"))return false;
+    if(!strcmp(name,"--slowdown-reduction")) {
+        if(strcmp(value,"on") && strcmp(value,"off"))return false;
+        timing(!strcmp(value,"on")?262:0);return true;
+    }
     if(!strcmp(name,"--coop-view")) {
         int mode=!strcmp(value,"shared")?0:!strcmp(value,"split")?1:!strcmp(value,"player1")?2:!strcmp(value,"player2")?3:-1;
-        if(mode<0)return false;mm4_coop_view_set(mode);return true;
+        if(mode<0 || (mm4_net_locked() && (mode!=0)!=mm4_coop_independent()))return false;mm4_coop_view_set(mode);return true;
     }
     if(!strcmp(name,"--mm4-coop-poke"))return mm4_coop_test_poke(value)!=0;
     if(!strcmp(name,"--mm4-qa-entry")) {
@@ -209,24 +242,34 @@ static int valid(const uint8_t *in,int len) {
     return 1;
 }
 static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(s_players,in,sizeof s_players);else memset(s_players,0,sizeof s_players);return 1;}
-static void reset(void) {enabled(0);s_coop=0;mm4_coop_set(0,s_roster);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);}
-static void activate(void) {enabled(1);}
+static void reset(void) {if(mm4_net_locked())return;timing(0);enabled(0);s_coop=0;mm4_coop_set(0,s_roster);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);}
+static void activate(void) {if(!mm4_net_locked())enabled(1);}
 static void activate_wide(void) {
+    if(mm4_net_locked())return;
     nes_mod_option_value("mega-man-4-usa.enhancement.widescreen","widescreen","aspect",s_aspect,sizeof s_aspect);
     s_wide=1;mm4_wide_set(1,s_aspect);
 }
 static void activate_proto(void) {
+    if(mm4_net_locked())return;
     char mode[16]="protoman",start[16]="protoman";
     nes_mod_option_value("mega-man-4-usa.character.protoman","protoman","mode",mode,sizeof mode);
     nes_mod_option_value("mega-man-4-usa.character.protoman","protoman","start",start,sizeof start);
     s_proto_mode=!strcmp(mode,"protoman");s_proto_start=!strcmp(start,"protoman");
     s_proto_on=mm4_proto_set(1,s_proto_mode,s_proto_start);
 }
+static void activate_coop(void) {
+    if(mm4_net_locked())return;
+    const char *package="mega-man-4-usa.coop";char roster[16]="megaman",view[16]="shared";
+    nes_mod_option_value(package,"coop","player-one",roster,sizeof roster);
+    nes_mod_option_value(package,"coop","coop-view",view,sizeof view);
+    activate_proto();s_coop=1;s_roster=!strcmp(roster,"protoman");mm4_coop_set(1,s_roster);
+    mm4_coop_view_set(!strcmp(view,"split")?1:!strcmp(view,"p1")?2:!strcmp(view,"p2")?3:0);
+}
 static void tcp_state(int id,const char *line) {
     char view[16];
     if(cyc_tcp_str(line,"view",view,sizeof view)) {
         int mode=!strcmp(view,"shared")?0:!strcmp(view,"split")?1:!strcmp(view,"player1")?2:!strcmp(view,"player2")?3:-1;
-        if(mode<0 || !mm4_coop_enabled()){cyc_tcp_err(id,"view needs active co-op and shared|split|player1|player2");return;}
+        if(mode<0 || !mm4_coop_enabled() || (mm4_net_locked() && (mode!=0)!=mm4_coop_independent())){cyc_tcp_err(id,"view needs active co-op and shared|split|player1|player2");return;}
         mm4_coop_view_set(mode);
     }
     char fields[1024];int n=snprintf(fields,sizeof fields,"\"view\":%d,",mm4_coop_view_mode());
@@ -239,12 +282,17 @@ static int menu_get(void *ctx,const RecompRuntimeUiItem *item,int *out) {
     *out=mm4_coop_view_mode();return 1;
 }
 static int menu_set(void *ctx,const RecompRuntimeUiItem *item,int value) {
-    (void)ctx;if(strcmp(item->key,"mm4.coop_view") || !mm4_coop_enabled() || value<0 || value>3)return 0;
+    (void)ctx;if(strcmp(item->key,"mm4.coop_view") || !mm4_coop_enabled() || value<0 || value>3 || (mm4_net_locked() && (value!=0)!=mm4_coop_independent()))return 0;
     mm4_coop_view_set(value);return mm4_coop_view_mode()==value;
 }
 static int menu_enabled(void *ctx,const RecompRuntimeUiItem *item) {
     (void)ctx;return !strcmp(item->key,"mm4.coop_view") && mm4_coop_enabled();
 }
+#ifdef CYC_HOST_EXTRAS_HAS_NETPLAY_VALUE_POLICY
+static bool menu_netplay_value_allowed(void *ctx,const RecompRuntimeUiItem *item,int value) {
+    (void)ctx;return !strcmp(item->key,"mm4.coop_view") && mm4_net_locked() && mm4_coop_independent() && value>=1 && value<=3;
+}
+#endif
 static const char *const view_choices[]={"Shared screen","Independent split screen","Player one","Player two"};
 static const RecompRuntimeUiItem menu_items[]={
     {.key="mm4.coop_view",.section="Display",.label="Two-player view",
@@ -265,11 +313,14 @@ NES_MOD_CONSTRUCTOR(register_mm4_controls) {
     nes_mod_register_activation_plugin("mega-man-4-usa.weapons",activate);
     nes_mod_register_activation_plugin("mega-man-4-usa.protoman",activate_proto);
     nes_mod_register_activation_plugin("mega-man-4-usa.widescreen",activate_wide);
+    nes_mod_register_activation_plugin("mega-man-4-usa.coop",activate_coop);
+    nes_mod_register_activation_plugin("mega-man-4-usa.slowdown",activate_slowdown);
 }
 const CycHostExtras *cyc_host_extras(void) {
     static const CycInputProfile profile={.id="megaman-weapons-1",.game_label={"Previous weapon (L)","Next weapon (R)"},
         .game_pad={"leftshoulder","rightshoulder"},.shortcut_pad={"none","leftstick+rightstick",NULL,NULL,NULL,NULL,NULL}};
-    static const CycHostOption options[]={{"--weapon-cycle",true,"on|off: cycle acquired weapons and helpers with L/R"},
+    static const CycHostOption options[]={{"--slowdown-reduction",true,"on|off: extra native CPU budget at the normal video/audio rate"},
+        {"--weapon-cycle",true,"on|off: cycle acquired weapons and helpers with L/R"},
         {"--coop-view",true,"shared|split|player1|player2: local co-op presentation"},
         {"--mm4-coop-poke",true,"FRAME:SEAT:HEX_ADDRESS:HEX_VALUE: personal QA prerequisite"},
         {"--mm4-qa-entry",true,"stage,page,room,art,palette,checkpoint: one-time native QA entry"},
@@ -282,10 +333,13 @@ const CycHostExtras *cyc_host_extras(void) {
         {"--world-audit",true,"FILE: compare decoded terrain to the native viewport"},
         {"--coop",true,"on|off: development native personal co-op"},
         {"--coop-roster",true,"megaman-protoman|protoman-megaman: player order"}};
-    static const CycHostExtras extras={.power_on=power,.frame_end=frame_end,.input=input,.option=option,.tcp_setup=tcp,
+    static const CycHostExtras extras={.power_on=power,.state_loaded=loaded,.frame_end=frame_end,.input=input,.option=option,.tcp_setup=tcp,
         .options=options,.option_count=sizeof options/sizeof *options,.input_profile=&profile,
 #ifdef CYC_WITH_RECOMP_UI
         .menu_items=menu_items,.menu_item_count=sizeof menu_items/sizeof *menu_items,.menu_callbacks=&menu_callbacks,
+#ifdef CYC_HOST_EXTRAS_HAS_NETPLAY_VALUE_POLICY
+        .menu_netplay_value_allowed=menu_netplay_value_allowed,
+#endif
 #endif
     };
     return &extras;

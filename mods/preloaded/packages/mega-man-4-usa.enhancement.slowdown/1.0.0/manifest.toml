@@ -1,0 +1,23 @@
+format_version = 1
+id = "mega-man-4-usa.enhancement.slowdown"
+version = "1.0.0"
+name = "Slowdown reduction"
+author = "NESRecomp"
+description = "Give the game more CPU time per video frame while retaining the normal refresh rate and audio clock. Disable for original hardware timing."
+license = "PolyForm-Noncommercial-1.0.0"
+resolver = "declarative"
+save_compatibility = "requires-same-mods"
+
+[[target]]
+game_id = "mega-man-4-usa"
+rom_crc32 = "2bc67aa8"
+
+[[feature]]
+id = "slowdown"
+name = "Slowdown reduction"
+group = "Gameplay"
+default_enabled = true
+
+[[plugin]]
+feature = "slowdown"
+id = "mega-man-4-usa.slowdown"

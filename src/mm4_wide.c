@@ -2,6 +2,7 @@
 #include "mm4_wide.h"
 #include "mm4_world.h"
 #include "mm4_coop.h"
+#include "mm4_net.h"
 #include "mm4_proto.h"
 #include "cyc_mod.h"
 #include "cyc_render.h"
@@ -52,7 +53,7 @@ static int geometry(int width, int *camera, int *left, int *lo, int *hi) {
 }
 void mm4_wide_begin(void) {
     memset(&S.build,0,sizeof S.build); memset(S.build.rank,255,sizeof S.build.rank); S.build.next_rank = 1;
-    int camera,left,lo,hi,width = mm4_coop_independent()?256:cyc_video_width();
+    int camera,left,lo,hi,width = mm4_coop_independent()?256:mm4_net_simulation_width(cyc_video_width());
     if (!geometry(width,&camera,&left,&lo,&hi)) {
         if(!mm4_coop_independent() || R(0x22)>=16 || R(0x300)!=1)return;
         camera=(R(0xF9)<<8)|R(0xFC);left=lo=camera;hi=camera+256;
@@ -112,7 +113,7 @@ static int spawn(uint16_t address) {
     (void)address;
     if (cyc_mod_isolated()) return 0;
     int camera,left,lo,hi;
-    int width=mm4_coop_independent()?256:cyc_video_width();
+    int width=mm4_coop_independent()?256:mm4_net_simulation_width(cyc_video_width());
     if (!geometry(width,&camera,&left,&lo,&hi) || !mm4_cart_ready() || mm4_coop_scene_locked()) return 0;
     int stage=R(0x22),bank=stage|0x20;
     seen_stage();
@@ -145,7 +146,7 @@ static int spawn(uint16_t address) {
 }
 static int authored(uint16_t address) {
     (void)address;if(cyc_mod_isolated() || !mm4_cart_ready() || mm4_coop_scene_locked())return 0;
-    int camera,left,lo,hi,width=mm4_coop_independent()?256:cyc_video_width();
+    int camera,left,lo,hi,width=mm4_coop_independent()?256:mm4_net_simulation_width(cyc_video_width());
     if(!geometry(width,&camera,&left,&lo,&hi))return 0;
     CycModRegs r;cyc_mod_regs(&r);int index=r.y;if(index>=128)return 0;
     int bank=R(0x22)|0x20;if(mm4_cart_prg(bank,0xB280+index)>=0xC0)return 0;
