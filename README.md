@@ -77,6 +77,14 @@ python tools/qa_route.py tests/routes/coop-boss-equipment.route --frames 6200 --
 
 The targeted boss route initializes the native pre-boss checkpoint and uses temporary invulnerability, boss health and positioning fixtures. Player two's actual shot must trigger defeat; original scripts handle victory, teleport, weapon-get and stage select. Native/interpreter state, pictures and PCM agree, including a cold continuation during the native door script. These bypasses do not establish full-stage or normal boss-fight coverage.
 
+Either living player can lead the tested right-hand boss shutter. The stage director receives the entering player's actual movement and terrain probe after both personal controllers have run; the original native room selection and scroll script still decide the transition. Both characters arrive with their own health, weapons and ammo.
+
+```text
+python tools/qa_coop_exit.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/coop-exit
+```
+
+This focused regression uses real Right input from the existing Bright Man checkpoint entry, with either player leading and the other idle. It checks the native boss intro, personal inventory, one world clock, interpreter agreement and a cold continuation during the actual shutter script. Vertical, alternate and distant exits retain their separate qualification requirements.
+
 Personal button edges advance when that player's native controller runs. A new held press that begins during an output-only lag frame remains available to the next controller update, including during dense boss effects. Current-build continuation retains that input history.
 
 An individual death keeps the partner in control without spending a life. Both the native collision and render-time pit paths retain their native death handling; the living partner keeps stage music. Personal countdowns execute the original timer routine. Once both players are down, one original shared retry spends a life and revives both at full health, with Buster selected and each player's own ammo retained. Either controller can operate global screens; each personal inventory keeps its owner's input.

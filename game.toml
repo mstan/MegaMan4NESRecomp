@@ -112,6 +112,12 @@ length = 8
 crc32 = 0x469F857A
 
 [[mod_function_hook]]
+id = "mm4.coop.before-director"
+addr = 0xC96E
+length = 8
+crc32 = 0xFA60D553
+
+[[mod_function_hook]]
 id = "mm4.coop.personal-end"
 addr = 0x8052
 length = 8
