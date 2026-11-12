@@ -12,12 +12,13 @@ static int s_sealed,s_applying,s_width=256;
 static unsigned s_cli;
 enum {CLI_COOP=1u<<0,CLI_VIEW=1u<<1,CLI_ROSTER=1u<<2,CLI_PROTO=1u<<3,
       CLI_MODE=1u<<4,CLI_START=1u<<5,CLI_WEAPONS=1u<<6,CLI_WIDE=1u<<7,
-      CLI_LINES=1u<<8,CLI_QA=1u<<9,CLI_FLICKER=1u<<10};
+      CLI_LINES=1u<<8,CLI_QA=1u<<9,CLI_FLICKER=1u<<10,CLI_WAIT=1u<<11};
 int mm4_net_locked(void) {return s_sealed && !s_applying;}
 int mm4_net_simulation_width(int local) {return s_sealed?s_width:local;}
 void mm4_net_note_option(const char *name) {
     if(!strcmp(name,"--coop"))s_cli|=CLI_COOP;
     if(!strcmp(name,"--coop-view"))s_cli|=CLI_VIEW;
+    if(!strcmp(name,"--coop-wait"))s_cli|=CLI_WAIT;
     if(!strcmp(name,"--coop-roster"))s_cli|=CLI_ROSTER;
     if(!strcmp(name,"--protoman"))s_cli|=CLI_PROTO;
     if(!strcmp(name,"--proto-mode"))s_cli|=CLI_MODE;
@@ -50,6 +51,7 @@ static Mm4Settings offer(void) {
     if(!(s_cli&CLI_COOP))c.coop=selected(coop,"coop");
     c.independent=(s_cli&CLI_VIEW)?mm4_host_view_preference()!=0:!option_is(coop,"coop","coop-view","shared","shared");
     if(!(s_cli&CLI_ROSTER))c.roster=option_is(coop,"coop","player-one","protoman","megaman");
+    if(!(s_cli&CLI_WAIT))c.wait=option_is(coop,"coop","wait-for-both","both","either");
     if(!(s_cli&CLI_PROTO))c.proto=selected(proto,"protoman");
     c.proto=c.proto || c.coop; /* co-op includes the character implementation */
     if(!(s_cli&CLI_MODE))c.mode=option_is(proto,"protoman","mode","protoman","protoman");
@@ -82,14 +84,14 @@ static int catalog_supported(void) {
 #endif
 }
 static int describe(Mm4Settings c,char *out,int cap) {
-    return snprintf(out,cap,"2:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d",c.coop,c.independent,c.roster,c.proto,c.mode,c.start,c.weapons,c.wide,c.flicker,c.lines);
+    return snprintf(out,cap,"3:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d:%d",c.coop,c.independent,c.roster,c.proto,c.mode,c.start,c.weapons,c.wide,c.flicker,c.lines,c.wait);
 }
 static int settings_get(char *out,int cap) {return describe(mm4_host_settings(),out,cap);}
 static int settings_offer(char *out,int cap) {s_offer=offer();return describe(s_offer,out,cap);}
 static int settings_apply(const char *value) {
     Mm4Settings c;int version,n=0;
     if((s_cli&CLI_QA) || !catalog_supported())return 0;
-    if(sscanf(value,"%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%3d%n",&version,&c.coop,&c.independent,&c.roster,&c.proto,&c.mode,&c.start,&c.weapons,&c.wide,&c.flicker,&c.lines,&n)!=11 || value[n] || version!=2)return 0;
+    if(sscanf(value,"%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%3d:%1d%n",&version,&c.coop,&c.independent,&c.roster,&c.proto,&c.mode,&c.start,&c.weapons,&c.wide,&c.flicker,&c.lines,&c.wait,&n)!=12 || value[n] || version!=3 || c.wait<0 || c.wait>1)return 0;
     if(c.coop!=1 || c.proto!=1 || c.independent<0 || c.independent>1 || c.roster<0 || c.roster>1 || c.mode<0 || c.mode>1 ||
         c.start<0 || c.start>1 || c.weapons<0 || c.weapons>1 || c.wide<0 || c.wide>1 || c.flicker<0 || c.flicker>1 || (c.lines!=0 && c.lines!=262) || (c.independent && s_width!=256))return 0;
     if(!s_saved){s_offline=mm4_host_settings();s_offline_offer=offer();s_offline_view=mm4_host_view_preference();s_offline_video=cyc_video_mode();s_offline_width=cyc_video_width();cyc_video_drawable_size(&s_offline_draw_w,&s_offline_draw_h);s_saved=1;}

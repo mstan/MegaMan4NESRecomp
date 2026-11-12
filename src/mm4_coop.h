@@ -22,6 +22,8 @@ int mm4_coop_write(int seat,uint16_t address,uint8_t value);
 void mm4_coop_register(void);
 void mm4_coop_set(int enabled,int roster);
 void mm4_coop_power(void);
+void mm4_coop_wait_set(int both);
+int mm4_coop_wait_both(void);
 void mm4_coop_input(uint8_t buttons[2]);
 void mm4_coop_end(void);
 void mm4_coop_build(void);

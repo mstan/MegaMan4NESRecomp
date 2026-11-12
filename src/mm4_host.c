@@ -70,13 +70,13 @@ static void timing(unsigned lines) {
 }
 static void loaded(void *ctx) {(void)ctx;timing(s_extra_lines);}
 Mm4Settings mm4_host_settings(void) {
-    Mm4Settings c={s_coop,mm4_coop_independent(),s_roster,mm4_proto_enabled(),s_proto_mode,s_proto_start,s_on,s_wide,mm4_no_flicker_enabled(),(int)s_extra_lines};return c;
+    Mm4Settings c={s_coop,mm4_coop_independent(),s_roster,mm4_proto_enabled(),s_proto_mode,s_proto_start,s_on,s_wide,mm4_no_flicker_enabled(),(int)s_extra_lines,mm4_coop_wait_both()};return c;
 }
 int mm4_host_apply_settings(Mm4Settings c,int local_seat) {
     s_coop=c.coop;s_roster=c.roster;s_proto_on=c.proto;s_proto_mode=c.mode;s_proto_start=c.start;s_wide=c.wide;
     if(!mm4_proto_set(c.proto,c.mode,c.start))return 0;
     enabled(c.weapons);mm4_wide_set(c.wide,"fit");mm4_no_flicker_set(c.flicker);timing((unsigned)c.lines);
-    int view=s_preferred_view;mm4_coop_set(c.coop,c.roster);
+    int view=s_preferred_view;mm4_coop_set(c.coop,c.roster);mm4_coop_wait_set(c.wait);
     mm4_host_view_set(c.independent?(view?view:(local_seat==1?3:2)):0);return 1;
 }
 static void activate_slowdown(void) {if(!mm4_net_locked())timing(262);}
@@ -108,6 +108,7 @@ static int graphics(int weapon,int commit) {
     return 0;
 }
 static int safe_for_seat(int seat) {
+    if(mm4_coop_enabled() && !mm4_coop_live(seat))return 0;
     unsigned state=mm4_coop_read(seat,0x30);
     return ram(0x22)<0x10 && mm4_coop_read(seat,0x300)==1 && (mm4_coop_read(seat,0xb0)&31) &&
         (state==0 || state==1 || state==3 || state==4) &&
@@ -197,6 +198,10 @@ static bool option(void *ctx,const char *name,const char *value) {
         int mode=!strcmp(value,"shared")?0:!strcmp(value,"split")?1:!strcmp(value,"player1")?2:!strcmp(value,"player2")?3:-1;
         if(mode<0 || (mm4_net_locked() && (mode!=0)!=mm4_coop_independent()))return false;mm4_host_view_set(mode);return true;
     }
+    if(!strcmp(name,"--coop-wait")) {
+        if(strcmp(value,"both") && strcmp(value,"either"))return false;
+        mm4_coop_wait_set(!strcmp(value,"both"));return true;
+    }
     if(!strcmp(name,"--mm4-coop-poke"))return mm4_coop_test_poke(value)!=0;
     if(!strcmp(name,"--mm4-qa-entry")) {
         unsigned v[6];char tail;
@@ -252,7 +257,7 @@ static int valid(const uint8_t *in,int len) {
     return 1;
 }
 static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(s_players,in,sizeof s_players);else memset(s_players,0,sizeof s_players);return 1;}
-static void reset(void) {if(mm4_net_locked())return;timing(0);enabled(0);s_coop=0;mm4_coop_set(0,s_roster);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);mm4_no_flicker_set(0);}
+static void reset(void) {if(mm4_net_locked())return;mm4_coop_wait_set(0);timing(0);enabled(0);s_coop=0;mm4_coop_set(0,s_roster);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);mm4_no_flicker_set(0);}
 static void activate(void) {if(!mm4_net_locked())enabled(1);}
 static void activate_wide(void) {
     if(mm4_net_locked())return;
@@ -273,6 +278,7 @@ static void activate_coop(void) {
     nes_mod_option_value(package,"coop","player-one",roster,sizeof roster);
     nes_mod_option_value(package,"coop","coop-view",view,sizeof view);
     activate_proto();s_coop=1;s_roster=!strcmp(roster,"protoman");mm4_coop_set(1,s_roster);
+    char wait[16]="either";nes_mod_option_value(package,"coop","wait-for-both",wait,sizeof wait);mm4_coop_wait_set(!strcmp(wait,"both"));
     mm4_host_view_set(!strcmp(view,"split")?1:!strcmp(view,"p1")?2:!strcmp(view,"p2")?3:0);
 }
 static void tcp_state(int id,const char *line) {
@@ -334,6 +340,7 @@ const CycHostExtras *cyc_host_extras(void) {
         {"--slowdown-reduction",true,"on|off: extra native CPU budget at the normal video/audio rate"},
         {"--weapon-cycle",true,"on|off: cycle acquired weapons and helpers with L/R"},
         {"--coop-view",true,"shared|split|player1|player2: local co-op presentation"},
+        {"--coop-wait",true,"either|both: native exit admission policy"},
         {"--mm4-coop-poke",true,"FRAME:SEAT:HEX_ADDRESS:HEX_VALUE: personal QA prerequisite"},
         {"--mm4-qa-entry",true,"stage,page,room,art,palette,checkpoint: one-time native QA entry"},
         {"--mm4-controls-log",true,"FILE: per-frame control state for QA"},

@@ -27,6 +27,19 @@ id = "mega-man-4-usa.coop"
 
 [[option]]
 feature = "coop"
+id = "wait-for-both"
+label = "Stage exits"
+type = "choice"
+default = "either"
+[[option.choice]]
+value = "either"
+label = "Either player can lead"
+[[option.choice]]
+value = "both"
+label = "Wait for both players"
+
+[[option]]
+feature = "coop"
 id = "coop-view"
 label = "Two-player view"
 type = "choice"

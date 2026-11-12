@@ -13,6 +13,7 @@ from qa_coop_targets import memory,personal
 def main():
  p=argparse.ArgumentParser(description=__doc__)
  for k in ['exe','rom','out']:p.add_argument('--'+k,required=True)
+ p.add_argument('--wait-both',action='store_true',help='verify recovery while the exit policy requires both living players')
  v=p.parse_args();exe=Path(v.exe);out=Path(v.out);out.mkdir(parents=True,exist_ok=True)
  _,prefix=qa_route.expand(Path(__file__).resolve().parent.parent/'tests/routes/coop-boss.route')
  prefix=[x for x in prefix if int(x.split()[0])<2400 and '001F' not in x]
@@ -28,6 +29,7 @@ def main():
    for who in [0,1]:
     live=who==leader
     for a,val in [(0x330,160 if live else 32),(0x378,116 if live else 250),(0x390,0),(0x30,0 if live else 1),(0x3D8,0),(0x3F0,0 if live else 0xFC),(0xB0,0x94 if not who else 0x91),(0xB1,0x8D if not who else 0x91),(0xA0,0 if live else 1),(0x3C,60)]:argv+=['--mm4-coop-poke',f'2390:{who}:{a:X}:{val:X}']
+   if v.wait_both:argv+=['--coop-wait','both']
    if name=='interp':argv+=['--interp-only']
    if name=='cold':argv+=['--load-state',str(root/'native/beam.cycstate')]
    with (d/'run.log').open('w') as log:q=subprocess.run(argv,stdout=log,stderr=subprocess.STDOUT,env=env,creationflags=(subprocess.CREATE_NO_WINDOW|subprocess.BELOW_NORMAL_PRIORITY_CLASS) if os.name=='nt' else 0,timeout=150)
