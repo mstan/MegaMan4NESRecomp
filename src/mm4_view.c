@@ -133,7 +133,10 @@ static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oa
 }
 static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *native, void *ctx) {
     (void)ctx; (void)native_x0;
-    if(cyc_mod_peek(0x22)==16)return inventory(out,W,H,native);
+    if(cyc_mod_peek(0x22)==16){
+        int personal=s_coop?mm4_coop_menu_active():cyc_mod_peek(0x30)<=4;
+        return personal?inventory(out,W,H,native):0;
+    }
     if (cyc_mod_peek(0x22) >= 16 || cyc_mod_peek(0x19) || cyc_mod_peek(0x1A)) return 0;
     if (!(s_enabled || s_wide || s_coop) || W < 256 || W > 864 || H != 240 || !cyc_render_background(s_bg)) return 0;
     mm4_world_audit(s_bg);

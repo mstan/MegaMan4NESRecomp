@@ -1,0 +1,7 @@
+# Native assisted boss route, then real P1 inputs after P2's finisher.
+INCLUDE coop-boss-equipment.route
+6200 RIGHT
+6201 -
+6250 A
+6255 -
+7199 SAVESTATE next_stage

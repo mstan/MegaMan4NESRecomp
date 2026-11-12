@@ -5,6 +5,7 @@ int mm4_coop_enabled(void);
 int mm4_coop_seat(void);
 int mm4_coop_character(void);
 int mm4_coop_native_scope(void);
+int mm4_coop_menu_active(void);
 int mm4_coop_read(int seat,uint16_t address);
 void mm4_coop_register(void);
 void mm4_coop_set(int enabled,int roster);

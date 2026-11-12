@@ -81,7 +81,7 @@ static int muzzle(uint16_t address) {
     (void)address;
     if(!mm4_proto_selected() || (cyc_mod_isolated() && !mm4_coop_native_scope()))return 0;
     CycModRegs r;cyc_mod_regs(&r);
-    int state=R(0x30),offset=state==1?-5:state==3?-4:3;
+    int state=R(0x30),offset=state==3?-4:3;
     if(state==0 && R(0x558)-R(0x33)==4 && (R(0x540)&3)==1)offset--;
     int y=R(0x378)+offset;
     if(r.y>=1 && r.y<=3 && y>=0 && y<240)P(0x378+r.y,y);

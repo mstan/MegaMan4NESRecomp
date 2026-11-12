@@ -35,6 +35,7 @@ int mm4_coop_enabled(void) { return s_on; }
 int mm4_coop_seat(void) { return s_on?C.current:0; }
 int mm4_coop_character(void) { return s_on?(s_roster^C.current):-1; }
 int mm4_coop_native_scope(void) { return s_on && s_scope; }
+int mm4_coop_menu_active(void) { return s_on && C.menu; }
 static void addresses(void) {
     if(s_count)return;
     /* MM4 reserves5..7 for shared actors too (native collision CPX#05).
@@ -277,10 +278,10 @@ static int pause_entry(uint16_t address) {
 void mm4_coop_input(uint8_t buttons[2]) {
     if(!s_on)return;
     for(int seat=0;seat<2;seat++){C.raw[seat]=buttons[seat];C.fresh[seat]=(uint8_t)(buttons[seat]&~C.raw_previous[seat]);C.raw_previous[seat]=buttons[seat];}
-    if(!C.initialized || (C.player[0].dead && C.player[1].dead)){
+    if(C.menu)buttons[0]=C.raw[C.pauser];
+    else if(!C.initialized || R(0x22)>=16 || (C.player[0].dead && C.player[1].dead)){
         buttons[0]=(uint8_t)(C.raw[0]|C.raw[1]);if((buttons[0]&3)==3)buttons[0]&=(uint8_t)~3;if((buttons[0]&12)==12)buttons[0]&=(uint8_t)~12;
-    }else if(C.menu)buttons[0]=C.raw[C.pauser];
-    else {
+    }else {
         C.pending_pause=255;
         buttons[0]=C.raw[C.anchor];
         for(int seat=0;seat<2;seat++)if(C.fresh[seat]&16){C.pending_pause=(uint8_t)seat;buttons[0]|=16;break;}
@@ -289,6 +290,9 @@ void mm4_coop_input(uint8_t buttons[2]) {
 }
 void mm4_coop_end(void) {
     if(!s_on)return;
+    /* Native inventory and stage select both use screen16. Only the
+     * explicitly owned personal menu retains its live stage contexts. */
+    if(C.initialized && !C.menu && R(0x22)>=16){C.initialized=0;C.scene_active=0;C.pending_pause=255;}
     if(C.initialized && !C.menu && R(0x22)<16){C.current=C.anchor;capture(&C.player[C.anchor]);}
     for(int seat=0;seat<2;seat++)C.player[seat].previous=C.raw[seat];
 }

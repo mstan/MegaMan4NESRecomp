@@ -33,6 +33,8 @@ Enable the optional Proto Man package in Mods. Its starting-character setting ch
 
 Proto Man mode supplies two uncharged shots, double incoming damage with native recoil, and a front airborne shield for supported small bullets. Reflected shots use native Buster damage independently of the selected weapon. The behavior setting also offers a reskin with Mega Man's stats. Included artwork is credited in the package's `assets/CREDITS.txt`.
 
+Airborne firing keeps the open-jump helmet and boot baseline, with the Buster leaving the cannon at the matching height in either direction. Ground, ladder and special-weapon origins retain their own rules.
+
 ```text
 python tools/qa_proto.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/proto
 ```
@@ -53,7 +55,7 @@ The check compares native and interpreter execution, decodes terrain against the
 
 The development `--coop on` switch provides separate native player, weapon and helper contexts, guest sprite rendering, and either player's native inventory with input assigned to its owner. `--coop-roster protoman-megaman` reverses the default Mega Man / Proto Man order. Personal actors are slots 0–4; native world actors in slots 5–23 remain shared. Guest weapon artwork is read from cartridge packets without private CHR-RAM uploads.
 
-The control slice is qualified through independent movement, jump, slide, firing, inventory ownership and current-build continuation. Each player's Buster and contact hitbox now use the native collision path against the shared world. Completed native horizontal room transitions bring the partner into the destination while preserving personal equipment. A boss finisher becomes the native player for victory, weapon-get and the following menus, with that player's native weapon graphics and palette restored immediately.
+The control slice is qualified through independent movement, jump, slide, firing, inventory ownership and current-build continuation. Each player's Buster and contact hitbox now use the native collision path against the shared world. Completed native horizontal room transitions bring the partner into the destination while preserving personal equipment. A boss finisher becomes the native player for victory and weapon-get, with that player's native weapon graphics and palette restored immediately.
 
 ```text
 python tools/qa_route.py tests/routes/coop-boss.route --frames 6200 --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/coop-boss --extra=--coop --extra=on --extra=--wide --extra=off
@@ -63,6 +65,8 @@ python tools/qa_route.py tests/routes/coop-boss-equipment.route --frames 6200 --
 The targeted boss route initializes the native pre-boss checkpoint and uses temporary invulnerability, boss health and positioning fixtures. Player two's actual shot must trigger defeat; original scripts handle victory, teleport, weapon-get and stage select. Native/interpreter state, pictures and PCM agree, including a cold continuation during the native door script. These bypasses do not establish full-stage or normal boss-fight coverage.
 
 An individual death keeps the partner in control without spending a life. Both the native collision and render-time pit paths retain their native death handling; the living partner keeps stage music. Personal countdowns execute the original timer routine. Once both players are down, one original shared retry spends a life and revives both at full health, with Buster selected and each player's own ammo retained. Either controller can operate global screens; each personal inventory keeps its owner's input.
+
+Stage select retains its original picture after either character's finisher. Personal inventory artwork applies only to the actual inventory. The completed stage releases its player contexts before stage selection and reinitializes both players on the next native arrival. Both controllers can choose a stage after a partner's finisher; their matched inputs reach identical runtime state, picture and PCM. The native inventory's owner input and original solo artwork have separate regression coverage.
 
 Targeted checks cover both death orders, actual lethal projectile contacts with sixteen native particles, pits including recoil, survivor movement, both players firing after retry, native/interpreter agreement, and current-build first-picture/PCM continuation. The previous native boss-finisher/victory route remains unchanged. Distant camera handoff, checkpoint/rejoin variants and complete stage coverage remain open.
 
