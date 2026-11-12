@@ -1,14 +1,14 @@
-"""Native Coil summon/contact in both ownership directions.
+"""Native Coil/Jet summon/contact in both ownership directions.
 
 Uses the normal reset route, then explicit body/energy prerequisites. Real
-native helper contact must spring either rider and spend only owner energy.
+native helper contact must spring/carry either rider, spending owner energy.
 --qualify adds exact native/interpreter and current-build cold continuations.
 """
 from pathlib import Path
 import argparse,json,os,subprocess,sys,shutil,wave,hashlib
 p=argparse.ArgumentParser()
 for key in ['exe','rom','root']:p.add_argument('--'+key,required=True)
-p.add_argument('--helper',choices=['coil'],default='coil')
+p.add_argument('--helper',choices=['coil','jet'],default='coil')
 p.add_argument('--qualify',action='store_true');a=p.parse_args()
 r=Path(__file__).parent;q=Path(a.root);q.mkdir(parents=True,exist_ok=True)
 sys.path.insert(0,str(r));import qa_route
@@ -35,6 +35,8 @@ boot=q/'boot/end.cycstate'
 if not boot.is_file():
  _,lines=qa_route.expand(r.parent/'tests/routes/coop-gallery.route');run('boot',2501,[x for x in lines if int(x.split()[0])<=2200])
 weapon=1 if a.helper=='coil' else 2
+end=2621 if weapon==1 else 2661
+cut=end-26
 for owner in [0,1]:
  guest=owner^1;tag=f'{a.helper}-owner{owner}'
  setup={0x300:1,0xB0:0x9C,0x3C:127,0xA0:0,0x330:128,0x348:0,0x378:148,0x390:0,0x30:0,0x3D8:0,0x3F0:0,0x3E:148,0x3F:0,0x301:0,0x302:0,0x303:0,0x304:0}
@@ -45,22 +47,62 @@ for owner in [0,1]:
  checks[tag+'-real-native-summon']=b[owner]['weapon']==weapon and h[0]!=0 and v['coop']['failed']==0;record()
  if not checks[tag+'-real-native-summon']:sys.exit(1)
  for rider,label in [(owner,'owner-contact'),(guest,'partner-contact')]:
-  other=rider^1;placed={0x330:x&255,0x348:x>>8,0x378:y-18,0x390:0,0x30:1,0x3D8:0,0x3F0:255,0x3E:y-18,0x3F:0,0x3C:127}
+  other=rider^1;placed={0x330:x&255,0x348:x>>8,0x378:y-18 if weapon==1 else y,0x390:0,0x30:1 if weapon==1 else 0,0x3D8:0,0x3F0:255 if weapon==1 else 0,0x3E:y-18 if weapon==1 else y,0x3F:0,0x3C:127}
   pokes=[(2581,rider,z,val) for z,val in placed.items()]+[(2581,other,0x330,64),(2581,other,0x348,0),(2581,other,0x378,148),(2581,other,0x30,0),(2581,other,0x3C,127)]
   lines=['2581 HOLD 0305-0317 00','2581 1:-','2581 2:-']
-  cut=2595
-  d,v,body=run(tag+'-'+label,2621,lines,waiting,pokes,saves=(cut,) if a.qualify and rider!=owner else ())
-  checks[tag+'-'+label+'-native-rise-and-owned-fuel']=body[rider]['y']<y-35 and body[owner]['ammo'][weapon-1]<28 and v['coop']['failed']==0;record()
+  d,v,body=run(tag+'-'+label,end,lines,waiting,pokes,saves=(cut,) if a.qualify and rider!=owner else ())
+  if weapon==1:
+   checks[tag+'-'+label+'-native-rise-and-owned-fuel']=body[rider]['y']<y-35 and body[owner]['ammo'][0]<28 and v['coop']['failed']==0
+  else:
+   h=body[owner]['helper']
+   checks[tag+'-'+label+'-native-flight']=h[0]==4 and h[27:29]==[0x86,0x8A] and h[2]+256*h[3]>x+50 and v['coop']['failed']==0
+   checks[tag+'-'+label+'-native-passenger']=body[rider]['x']>x+50
+   checks[tag+'-'+label+'-exact-native-cost']=body[owner]['ammo'][1]==27 and body[owner^1]['ammo'][1]==0
+   checks[tag+'-'+label+'-personal-equipment']=all(body[s]['weapon']==(2 if s==owner else 0) and body[s]['state']<8 for s in [0,1])
+  record()
   if a.helper=='coil':
    checks[tag+'-'+label+'-exact-native-cost']=body[owner]['ammo'][0]==26 and body[owner^1]['ammo'][0]==28
    checks[tag+'-'+label+'-personal-equipment']=all(body[s]['weapon']==(1 if s==owner else 0) and body[s]['state']<8 for s in [0,1]);record()
   if a.qualify and rider!=owner:
-   i,_,_=run(tag+'-partner-interp',2621,lines,waiting,pokes,True,(cut,))
-   c,_,_=run(tag+'-partner-cold',2621,lines,d/f'at{cut}.cycstate')
+   i,_,_=run(tag+'-partner-interp',end,lines,waiting,pokes,True,(cut,))
+   c,_,_=run(tag+'-partner-cold',end,lines,d/f'at{cut}.cycstate')
    checks[tag+'-backend-exact']=all((d/f).read_bytes()==(i/f).read_bytes() for f in ['frames.hash','end.cycstate','audio.wav','present.png'])
    tail=qa_route.load_hashes(c/'frames.hash');full=qa_route.load_hashes(d/'frames.hash')
-   checks[tag+'-cold-hash']=len(tail)==2621-cut-1 and tail=={f:h for f,h in full.items() if f>cut}
+   checks[tag+'-cold-hash']=len(tail)==end-cut-1 and tail=={f:h for f,h in full.items() if f>cut}
    checks[tag+'-cold-state-pixels']=all((d/f).read_bytes()==(c/f).read_bytes() for f in ['end.cycstate','present.png',f'present_{cut+1:05d}.png'])
    with wave.open(str(d/'audio.wav')) as warm,wave.open(str(c/'audio.wav')) as cold:pcm=warm.readframes(warm.getnframes());tailpcm=cold.readframes(cold.getnframes())
    checks[tag+'-cold-pcm']=bool(tailpcm) and pcm.endswith(tailpcm);record()
+ if weapon==2:
+  # Fresh boarding can happen on different controller updates. Compare the
+  # owner clock from one genuine already-active Jet, with the same position
+  # and one-tick fuel prerequisite in both passenger cases.
+  active=q/(tag+'-owner-contact')/'end.cycstate'
+  for rider,label in [(owner,'clock-own'),(guest,'clock-partner')]:
+   placed={0x330:152,0x348:0,0x378:180,0x390:0,0x30:0,0x3D8:0,0x3F0:0,0x3E:180,0x3F:0,0x3C:127}
+   pokes=[(end,rider,z,val) for z,val in placed.items()]+[(end,rider^1,0x330,64),(end,rider^1,0x348,0),(end,rider^1,0x378,180),(end,rider^1,0x30,0),(end,rider^1,0x3C,127)]
+   pokes +=[(end,owner,z,val) for z,val in [(0x31C,0),(0x334,152),(0x34C,0),(0x4B4,1)]]
+   _,v,b=run(tag+'-'+label,end+30,[f'{end} HOLD 0305-0317 00',f'{end} 1:-',f'{end} 2:-'],active,pokes)
+   checks[tag+'-'+label+'-ride-and-native-cost']=b[rider]['x']>=188 and b[owner]['ammo'][1]==26 and b[owner^1]['ammo'][1]==0 and not v['coop']['failed'];record()
+  checks[tag+'-one-native-helper-clock']=observations[tag+'-clock-own']['players'][owner]['helper']==observations[tag+'-clock-partner']['players'][owner]['helper'];record()
+if weapon==2:
+ # Explicit overlap prerequisite: copy one genuinely active native Jet into
+ # the second personal pool. Summoning/boarding each seat is checked above.
+ active=q/'jet-owner0-clock-own/end.cycstate';start=end+30;stop=start+10;cut=start+4
+ pokes=[(start,1,z+4,personal(active,0,z+4)) for z in range(0x300,0x5B9,24)]
+ for seat in [0,1]:
+  pokes +=[(start,seat,z,val) for z,val in [(0x330,190),(0x348,0),(0x378,180),(0x390,0),(0x30,0),(0x3D8,0),(0x3F0,0),(0x3C,127),(0x334,190),(0x34C,0),(0x31C,0)]]
+ pokes +=[(start,1,0xA0,2),(start,1,0xB2,0x9A)]
+ lines=[f'{start} HOLD 0305-0317 00',f'{start} 1:-',f'{start} 2:-']
+ n,v,b=run('two-active-jets',stop,lines,active,pokes,saves=(cut,) if a.qualify else ())
+ checks['overlapping-own-jets-carry-once']=all(b[s]['x']==b[s]['helper'][2]+256*b[s]['helper'][3] for s in [0,1])
+ checks['overlapping-own-jets-one-clock']=b[0]['helper']==b[1]['helper'] and all(b[s]['ammo'][1]==26 for s in [0,1]) and not v['coop']['failed'];record()
+ if a.qualify:
+  i,_,_=run('two-active-jets-interp',stop,lines,active,pokes,True,(cut,))
+  c,_,_=run('two-active-jets-cold',stop,lines,n/f'at{cut}.cycstate')
+  checks['overlap-backend-exact']=all((n/f).read_bytes()==(i/f).read_bytes() for f in ['frames.hash','end.cycstate','audio.wav','present.png'])
+  full=qa_route.load_hashes(n/'frames.hash');tail=qa_route.load_hashes(c/'frames.hash')
+  checks['overlap-cold-hash']=len(tail)==stop-cut-1 and tail=={f:h for f,h in full.items() if f>cut}
+  checks['overlap-cold-state-pixels']=all((n/f).read_bytes()==(c/f).read_bytes() for f in ['end.cycstate','present.png',f'present_{cut+1:05d}.png'])
+  with wave.open(str(n/'audio.wav')) as warm,wave.open(str(c/'audio.wav')) as cold:pcm=warm.readframes(warm.getnframes());tailpcm=cold.readframes(cold.getnframes())
+  checks['overlap-cold-pcm']=bool(tailpcm) and pcm.endswith(tailpcm);record()
 sys.exit(0 if all(checks.values()) else 1)
