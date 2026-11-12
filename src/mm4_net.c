@@ -47,7 +47,7 @@ static Mm4Settings offer(void) {
     Mm4Settings c=mm4_host_settings();if(!cyc_session_mods_enabled())return c;
     const char *proto="mega-man-4-usa.character.protoman",*coop="mega-man-4-usa.coop";
     if(!(s_cli&CLI_COOP))c.coop=selected(coop,"coop");
-    c.independent=(s_cli&CLI_VIEW)?mm4_coop_view_mode()!=0:!option_is(coop,"coop","coop-view","shared","shared");
+    c.independent=(s_cli&CLI_VIEW)?mm4_host_view_preference()!=0:!option_is(coop,"coop","coop-view","shared","shared");
     if(!(s_cli&CLI_ROSTER))c.roster=option_is(coop,"coop","player-one","protoman","megaman");
     if(!(s_cli&CLI_PROTO))c.proto=selected(proto,"protoman");
     c.proto=c.proto || c.coop; /* co-op includes the character implementation */
@@ -89,15 +89,15 @@ static int settings_apply(const char *value) {
     if(sscanf(value,"%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%1d:%3d%n",&version,&c.coop,&c.independent,&c.roster,&c.proto,&c.mode,&c.start,&c.weapons,&c.wide,&c.lines,&n)!=10 || value[n] || version!=1)return 0;
     if(c.coop!=1 || c.proto!=1 || c.independent<0 || c.independent>1 || c.roster<0 || c.roster>1 || c.mode<0 || c.mode>1 ||
         c.start<0 || c.start>1 || c.weapons<0 || c.weapons>1 || c.wide<0 || c.wide>1 || (c.lines!=0 && c.lines!=262) || (c.independent && s_width!=256))return 0;
-    if(!s_saved){s_offline=mm4_host_settings();s_offline_offer=offer();s_offline_view=mm4_coop_view_mode();s_offline_video=cyc_video_mode();s_offline_width=cyc_video_width();s_saved=1;}
+    if(!s_saved){s_offline=mm4_host_settings();s_offline_offer=offer();s_offline_view=mm4_host_view_preference();s_offline_video=cyc_video_mode();s_offline_width=cyc_video_width();s_saved=1;}
     s_applying=1;int ok=mm4_host_apply_settings(c,nes_netplay_local_slot());
     /* The online catalog defers activation plugins. Keep its local view
      * preference while the host's shared/independent class stays sealed. */
     if(ok && c.independent && !(s_cli&CLI_VIEW) && cyc_session_mods_enabled()) {
         const char *coop="mega-man-4-usa.coop";
-        if(option_is(coop,"coop","coop-view","split","shared"))mm4_coop_view_set(1);
-        else if(option_is(coop,"coop","coop-view","p1","shared"))mm4_coop_view_set(2);
-        else if(option_is(coop,"coop","coop-view","p2","shared"))mm4_coop_view_set(3);
+        if(option_is(coop,"coop","coop-view","split","shared"))mm4_host_view_set(1);
+        else if(option_is(coop,"coop","coop-view","p1","shared"))mm4_host_view_set(2);
+        else if(option_is(coop,"coop","coop-view","p2","shared"))mm4_host_view_set(3);
     }
     s_applying=0;if(!ok)return 0;
     s_sealed=1;nes_netplay_require_capabilities(1);nes_netplay_require_player_count(2);
@@ -116,7 +116,7 @@ static int settings_apply(const char *value) {
 }
 static void settings_restore(void) {
     s_sealed=0;if(s_saved){
-        mm4_host_apply_settings(s_offline,0);mm4_coop_view_set(s_offline_view);
+        mm4_host_apply_settings(s_offline,0);mm4_host_view_set(s_offline_view);
         if(s_offline_video==NES_VIDEO_STOCK && !s_offline.independent)cyc_video_request_width(s_offline_width);else cyc_video_set_mode(s_offline_video);
         /* Optional readback of the actual restore callback. Inactive catalog
          * preferences can differ from active runtime settings; preserve each. */
@@ -127,7 +127,7 @@ static void settings_restore(void) {
             describe(s_offline_offer,original,sizeof original);describe(offer(),next,sizeof next);
             FILE *f=fopen(record,"w");if(f) {
                 fprintf(f,"{\"expected\":\"%s\",\"actual\":\"%s\",\"original_offer\":\"%s\",\"next_offer\":\"%s\",\"expected_view\":%d,\"view\":%d,\"expected_video_mode\":%d,\"video_mode\":%d}\n",
-                    expected,actual,original,next,s_offline_view,mm4_coop_view_mode(),s_offline_video,cyc_video_mode());fclose(f);
+                    expected,actual,original,next,s_offline_view,mm4_host_view_preference(),s_offline_video,cyc_video_mode());fclose(f);
             }
         }
         s_saved=0;

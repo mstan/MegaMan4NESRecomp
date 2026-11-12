@@ -26,7 +26,7 @@ static Controls s_players[2];
 #define S (s_players[mm4_coop_seat()])
 static int s_on;
 static int s_proto_on,s_proto_mode=1,s_proto_start=1;
-static int s_coop,s_roster;
+static int s_coop,s_roster,s_preferred_view;
 static unsigned s_extra_lines;
 static uint8_t *s_cart;
 static size_t s_cart_size;
@@ -58,6 +58,11 @@ int mm4_cart_ready(void) {return s_cart!=NULL;}
 void mm4_controls_refresh(void) {nes_mod_set_function_hook_enabled("mm4.player.dispatch",s_on || mm4_proto_enabled());}
 static void enabled(int on) {s_on=on!=0;nes_mod_set_local_only("MM4 weapon switching (unqualified netplay)",s_on);for(int i=0;i<2;i++)s_players[i].pending=s_players[i].previous=0;mm4_controls_refresh();}
 
+int mm4_host_view_preference(void) {return s_preferred_view;}
+void mm4_host_view_set(int mode) {
+    if(mode<0 || mode>3)return;
+    s_preferred_view=mode;mm4_coop_view_set(mode);
+}
 static void timing(unsigned lines) {
     s_extra_lines=lines;
     if(!lines || cyc_extra_scanlines_supported())cyc_set_extra_scanlines(lines);
@@ -71,8 +76,8 @@ int mm4_host_apply_settings(Mm4Settings c,int local_seat) {
     s_coop=c.coop;s_roster=c.roster;s_proto_on=c.proto;s_proto_mode=c.mode;s_proto_start=c.start;s_wide=c.wide;
     if(!mm4_proto_set(c.proto,c.mode,c.start))return 0;
     enabled(c.weapons);mm4_wide_set(c.wide,"fit");timing((unsigned)c.lines);
-    int view=mm4_coop_view_mode();mm4_coop_set(c.coop,c.roster);
-    mm4_coop_view_set(c.independent?(view?view:(local_seat==1?3:2)):0);return 1;
+    int view=s_preferred_view;mm4_coop_set(c.coop,c.roster);
+    mm4_host_view_set(c.independent?(view?view:(local_seat==1?3:2)):0);return 1;
 }
 static void activate_slowdown(void) {if(!mm4_net_locked())timing(262);}
 
@@ -185,7 +190,7 @@ static bool option(void *ctx,const char *name,const char *value) {
     }
     if(!strcmp(name,"--coop-view")) {
         int mode=!strcmp(value,"shared")?0:!strcmp(value,"split")?1:!strcmp(value,"player1")?2:!strcmp(value,"player2")?3:-1;
-        if(mode<0 || (mm4_net_locked() && (mode!=0)!=mm4_coop_independent()))return false;mm4_coop_view_set(mode);return true;
+        if(mode<0 || (mm4_net_locked() && (mode!=0)!=mm4_coop_independent()))return false;mm4_host_view_set(mode);return true;
     }
     if(!strcmp(name,"--mm4-coop-poke"))return mm4_coop_test_poke(value)!=0;
     if(!strcmp(name,"--mm4-qa-entry")) {
@@ -263,14 +268,14 @@ static void activate_coop(void) {
     nes_mod_option_value(package,"coop","player-one",roster,sizeof roster);
     nes_mod_option_value(package,"coop","coop-view",view,sizeof view);
     activate_proto();s_coop=1;s_roster=!strcmp(roster,"protoman");mm4_coop_set(1,s_roster);
-    mm4_coop_view_set(!strcmp(view,"split")?1:!strcmp(view,"p1")?2:!strcmp(view,"p2")?3:0);
+    mm4_host_view_set(!strcmp(view,"split")?1:!strcmp(view,"p1")?2:!strcmp(view,"p2")?3:0);
 }
 static void tcp_state(int id,const char *line) {
     char view[16];
     if(cyc_tcp_str(line,"view",view,sizeof view)) {
         int mode=!strcmp(view,"shared")?0:!strcmp(view,"split")?1:!strcmp(view,"player1")?2:!strcmp(view,"player2")?3:-1;
         if(mode<0 || !mm4_coop_enabled() || (mm4_net_locked() && (mode!=0)!=mm4_coop_independent())){cyc_tcp_err(id,"view needs active co-op and shared|split|player1|player2");return;}
-        mm4_coop_view_set(mode);
+        mm4_host_view_set(mode);
     }
     char fields[1024];int n=snprintf(fields,sizeof fields,"\"view\":%d,",mm4_coop_view_mode());
     mm4_coop_json(fields+n,sizeof fields-n);cyc_tcp_ok(id,fields);
@@ -283,7 +288,7 @@ static int menu_get(void *ctx,const RecompRuntimeUiItem *item,int *out) {
 }
 static int menu_set(void *ctx,const RecompRuntimeUiItem *item,int value) {
     (void)ctx;if(strcmp(item->key,"mm4.coop_view") || !mm4_coop_enabled() || value<0 || value>3 || (mm4_net_locked() && (value!=0)!=mm4_coop_independent()))return 0;
-    mm4_coop_view_set(value);return mm4_coop_view_mode()==value;
+    mm4_host_view_set(value);return mm4_coop_view_mode()==value;
 }
 static int menu_enabled(void *ctx,const RecompRuntimeUiItem *item) {
     (void)ctx;return !strcmp(item->key,"mm4.coop_view") && mm4_coop_enabled();

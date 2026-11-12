@@ -2,6 +2,8 @@
 #include <stdint.h>
 typedef struct {int coop,independent,roster,proto,mode,start,weapons,wide,lines;} Mm4Settings;
 int mm4_net_locked(void);
+int mm4_host_view_preference(void);
+void mm4_host_view_set(int mode);
 int mm4_net_simulation_width(int local_width);
 void mm4_net_note_option(const char *name);
 Mm4Settings mm4_host_settings(void);
