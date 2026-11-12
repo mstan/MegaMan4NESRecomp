@@ -4,6 +4,7 @@
 #include "mm4_wide.h"
 #include "mm4_coop.h"
 #include "mm4_hud.h"
+#include "mm4_menu.h"
 #include "cyc_mod.h"
 #include "cyc_render.h"
 #include "mod_function_hooks.h"
@@ -66,6 +67,7 @@ static int dma(uint16_t address) {
     mm4_wide_latch();
     mm4_coop_latch();
     mm4_hud_latch();
+    mm4_menu_latch();
     return 0;
 }
 static uint32_t color(int index, const Mm4ProtoBody *body) {
@@ -89,23 +91,22 @@ static uint32_t menu_color(uint32_t c) {
     }
     return out;
 }
-static int inventory(uint32_t *out,int W,int H,const uint32_t *native) {
+void mm4_view_menu_character(uint32_t *out,int W,int origin,int cursor,int character,const uint8_t colors[8]) {
     const CycProtoAtlas *atlas=mm4_proto_atlas();
-    if(!s_enabled || !mm4_proto_selected() || !atlas || W<256 || H!=240 || !native)return 0;
-    int origin=(W-256)/2;
-    for(int i=0;i<W*H;i++)out[i]=0xff000000u;
-    for(int y=0;y<H;y++)memcpy(out+y*W+origin,native+y*256,256*sizeof *out);
+    if(!character || !atlas)return;
     /* Native life icon: two adjacent 8x16 parts at184,192 (9E51 OAM). */
     for(int y=0;y<16;y++)for(int x=0;x<16;x++) {
         uint32_t c=atlas->portrait[y*16+x];
         out[(192+y)*W+origin+184+x]=c?menu_color(c):0xff000000u;
     }
-    int cursor=cyc_mod_peek(0x138),weapon=cursor<16?mm4_cart_prg(0x3c,0x9b71+cursor):255;
+    int weapon=cursor<16?mm4_cart_prg(0x3c,0x9b71+cursor):255;
+    /* The E-tank row uses the same native body preview as Buster. */
+    if(cursor==7)weapon=0;
     /* Keep Rush Coil/Marine/Jet, Wire and Balloon's original previews. */
     if(weapon==0 || weapon==4 || (weapon>=7 && weapon<=13)) {
         const CycProtoPose *p=&atlas->poses[CYC_PROTO_IDLE0];
         Mm4ProtoBody b={0};b.weapon=(uint8_t)(weapon!=0);
-        for(int i=0;i<8;i++)b.palette[i]=cyc_mod_peek(0x610+i);
+        for(int i=0;i<8;i++)b.palette[i]=colors[i];
         for(int y=178;y<218;y++)for(int x=108;x<148;x++)out[y*W+origin+x]=0xff000000u;
         for(int y=0;y<p->height;y++)for(int x=0;x<p->width;x++) {
             int index=p->pixels[y*32+x];if(!index)continue;
@@ -113,6 +114,14 @@ static int inventory(uint32_t *out,int W,int H,const uint32_t *native) {
             out[py*W+origin+px]=menu_color(color(index,&b));
         }
     }
+}
+static int inventory(uint32_t *out,int W,int H,const uint32_t *native) {
+    if(!s_enabled || !mm4_proto_selected() || !mm4_proto_atlas() || W<256 || H!=240 || !native)return 0;
+    int origin=(W-256)/2;uint8_t colors[8];
+    for(int i=0;i<W*H;i++)out[i]=0xff000000u;
+    for(int y=0;y<H;y++)memcpy(out+y*W+origin,native+y*256,256*sizeof *out);
+    for(int i=0;i<8;i++)colors[i]=cyc_mod_peek(0x610+i);
+    mm4_view_menu_character(out,W,origin,cyc_mod_peek(0x138),1,colors);
     cyc_render_set_native_origin(origin);return 1;
 }
 static void character_body(uint32_t *out, int W, int origin, const Mm4ProtoBody *b) {
@@ -202,6 +211,7 @@ static int panels(uint32_t *out,int width,int height) {
 static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *native, void *ctx) {
     (void)ctx; (void)native_x0;
     if(cyc_mod_peek(0x22)==16){
+        if(mm4_menu_draw(out,W,H))return 1;
         int personal=s_coop?mm4_coop_menu_active():cyc_mod_peek(0x30)<=4;
         return personal?inventory(out,W,H,native):0;
     }

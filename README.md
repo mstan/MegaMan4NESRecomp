@@ -68,6 +68,14 @@ The check compares native and interpreter execution, decodes terrain against the
 
 Enable the optional Co-op package in Mods, or use `--coop on` for development checks. It provides separate native player, weapon and helper contexts, guest sprite rendering, and either player's native inventory with input assigned to its owner. `--coop-roster protoman-megaman` reverses the default Mega Man / Proto Man order. Personal actors are slots 0–4; native world actors in slots 5–23 remain shared. Guest weapon artwork is read from cartridge packets without private CHR-RAM uploads.
 
+Split and individual views give each player a usable native inventory page with their own cursor, health, ammo, equipment and character portrait. Either living player can pause; only the pauser can resume, using A or Start on an equipment row. The other player can choose equipment without resuming. Lives and E-tanks stay shared. Simultaneous E-tank requests use player order and the original refill routine, with one tank spent for one recipient. Both equipment choices are retained when they arrive on the pauser's closing tick. Shared view retains the original single-page inventory.
+
+```text
+python tools/qa_coop_inventory.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/inventory
+```
+
+This check reuses the actual pit/checkpoint setup, supplies low health and one E-tank before pausing, and uses native cursor/confirm input. It covers both pause owners, a contested refill, closing-tick choices, one frozen world clock, interpreter agreement and current-build first-picture/state/PCM continuation during the refill.
+
 The control slice is qualified through independent movement, jump, slide, firing, inventory ownership and current-build continuation. Each player's Buster and contact hitbox now use the native collision path against the shared world. Completed native horizontal room transitions bring the partner into the destination while preserving personal equipment. A boss finisher becomes the native player for victory and weapon-get, with that player's native weapon graphics and palette restored immediately.
 
 ```text
@@ -114,7 +122,7 @@ The guest's airborne shield blocks supported native straight bullets in either d
 
 Independent split screen presents two native 256-by-240 panes; player-one and player-two views each retain one 256-by-240 pane. Select the view under Display in the runtime menu, or use `--coop-view shared|split|player1|player2`. Window resizing and aspect changes keep these grids intact. Returning to the shared view restores the selected aspect policy. Each pane has its player's native health and weapon meters, with a shared boss meter. Ordinary horizontal terrain is decoded from the native cartridge tables; the left eight pixels are revealed rather than blanked by the hardware edge mask.
 
-Native actor activation uses the union of the two view rectangles and excludes their empty gap. An authored enemy is not repeatedly constructed while its spawn remains visible; leaving and returning allows the original constructor to create it again. Both live player bodies, separate terrain, native actor identities, distant survivor control, native/interpreter agreement and current-build continuation have targeted coverage. Scripted and vertical scenes currently retain the source camera; complete independent transition and inventory presentation remain open.
+Native actor activation uses the union of the two view rectangles and excludes their empty gap. An authored enemy is not repeatedly constructed while its spawn remains visible; leaving and returning allows the original constructor to create it again. Both live player bodies, separate terrain, native actor identities, distant survivor control, native/interpreter agreement and current-build continuation have targeted coverage. Scripted and vertical scenes currently retain the source camera; distant transition qualification remains open.
 
 ```text
 python tools/qa_views.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/views

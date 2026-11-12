@@ -224,3 +224,15 @@ id = "mm4.coop.target-end"
 addr = 0x8097
 length = 8
 crc32 = 0x84C2EF43
+
+[[mod_function_hook]]
+id = "mm4.menu.flush"
+addr = 0xC330
+length = 8
+crc32 = 0x4FE61602
+
+[[mod_function_hook]]
+id = "mm4.coop.menu-idle"
+addr = 0x96D7
+length = 8
+crc32 = 0xF1D712F4

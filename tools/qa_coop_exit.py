@@ -70,7 +70,7 @@ def main():
             print(seat,name,flush=True)
         n=root/'native';i=root/'interp';c=root/'cold';end=n/'end.cycstate'
         rows=[json.loads(x) for x in (n/'frames.jsonl').read_text().splitlines()];last=rows[-1]['coop'];m=memory(end)
-        label=f'seat{seat}-';raw=(n/'scroll.cycstate').read_bytes();at=max(raw.find(b'M4CB'),raw.find(b'M4CC'))
+        label=f'seat{seat}-';raw=(n/'scroll.cycstate').read_bytes();at=max(raw.find(b'M4CB'),raw.find(b'M4CC'),raw.find(b'M4CD'),raw.find(b'M4CE'))
         leader=seat^int(v.return_down or v.wait_both)
         if v.wait_both and not v.vertical:leader=seat # The first real contact owns the shutter after both arrive.
         if v.partner_dies:leader=seat

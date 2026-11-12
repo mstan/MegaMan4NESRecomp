@@ -132,16 +132,8 @@ int mm4_controls_pattern(int weapon,unsigned address) {
     }
     return cyc_render_chr((uint16_t)address);
 }
-int mm4_controls_dispatch(uint16_t address) {
-    (void)address;
-    if(mm4_proto_dispatch()) {S.pending=0;return 1;}
-    unsigned fresh=S.pending;S.pending=0;
-    if(!s_on || !s_cart || !safe() || (fresh!=CYC_GAME_L && fresh!=CYC_GAME_R))return 0;
-    int current=ram(0xa0),next=current,step=fresh==CYC_GAME_L?-1:1;
-    if(current>13)return 0;
-    do {next=(next+step+14)%14;}while(next!=current && next && !(ram(0xb0+next)&0x80));
-    if(next==current || !graphics(next,0))return 0;
-    if(!graphics(next,1))return 0;
+int mm4_controls_equip(int next) {
+    if(!s_cart || next<0 || next>13 || (next && !(ram(0xB0+next)&128)) || !graphics(next,0) || !graphics(next,1))return 0;
     poke(0xa0,next);poke(0x131,next?(0x80|next):0);
     poke(0x35,0);poke(0x36,0);poke(0x4c8,0);
     /* Same personal object cleanup as native menu exit DC00 (slots 1..4). */
@@ -150,7 +142,17 @@ int mm4_controls_dispatch(uint16_t address) {
     }
     for(int i=0;i<3;i++) {unsigned c=prg(0x3c,0x9b04+next*4+i);poke(0x611+i,c);poke(0x631+i,c);}
     poke(0x18,0xff);
-    S.changes++;
+    return 1;
+}
+int mm4_controls_dispatch(uint16_t address) {
+    (void)address;
+    if(mm4_proto_dispatch()) {S.pending=0;return 1;}
+    unsigned fresh=S.pending;S.pending=0;
+    if(!s_on || !s_cart || !safe() || (fresh!=CYC_GAME_L && fresh!=CYC_GAME_R))return 0;
+    int current=ram(0xa0),next=current,step=fresh==CYC_GAME_L?-1:1;
+    if(current>13)return 0;
+    do {next=(next+step+14)%14;}while(next!=current && next && !(ram(0xb0+next)&0x80));
+    if(next!=current && mm4_controls_equip(next))S.changes++;
     return 0;
 }
 static void input(void *ctx,uint8_t buttons[2]) {
@@ -178,7 +180,7 @@ static void power(void *ctx) {
 }
 static void frame_end(void *ctx) {
     (void)ctx;mm4_proto_end();mm4_coop_end();
-    char fields[512],wide[256],coop[512],timing_fields[64];
+    char fields[512],wide[256],coop[1024],timing_fields[64];
     snprintf(timing_fields,sizeof timing_fields,"\"timing\":{\"extra_lines\":%u}",cyc_extra_scanlines());mm4_proto_json(fields,sizeof fields);mm4_wide_json(wide,sizeof wide);mm4_coop_json(coop,sizeof coop);
     if(s_log)fprintf(s_log,"{\"frame\":%u,\"weapon\":%u,\"held\":%u,\"changes\":%llu,\"hp\":%u,\"state\":%u,\"stage\":%u,\"charge\":%u,%s,%s,%s,%s}\n",
         cyc_ring_frame,ram(0xa0),S.previous,(unsigned long long)S.changes,ram(0xb0),ram(0x30),ram(0x22),ram(0x35),fields,wide,coop,timing_fields);
