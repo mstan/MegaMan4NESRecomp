@@ -179,7 +179,7 @@ static int private_step(int seat) {
     if(ok)ok=cyc_mod_call(0x8000,&r);
     if(ok) {P(0xf5,0x3a);P(0xf6,0x3b);ok=cyc_mod_call(0xff37,&r);}
     s_personal_bhv=1;if(ok)ok=cyc_mod_call(0x8003,&r);s_personal_bhv=0;
-    if(ok){capture(&C.player[seat]);snapshot_ram(after);C.updates[seat]++;}
+    if(ok){capture(&C.player[seat]);snapshot_ram(after);C.updates[seat]++;C.player[seat].previous=C.raw[seat];}
     if(enabled)hooks(0);s_scope=0;cyc_mod_isolate_end();C.current=(uint8_t)owner;
     if(ok)merge_world(before,after);return ok;
 }
@@ -211,7 +211,7 @@ static int controller(uint16_t address) {
     P(0x15,0);P(0x17,0);return 0;
 }
 static int after_controller(uint16_t address) {
-    (void)address;if(s_on && C.initialized && !cyc_mod_isolated() && !C.menu) {capture(&C.player[C.anchor]);C.updates[C.anchor]++;}return 0;
+    (void)address;if(s_on && C.initialized && !cyc_mod_isolated() && !C.menu) {capture(&C.player[C.anchor]);C.updates[C.anchor]++;C.player[C.anchor].previous=C.raw[C.anchor];}return 0;
 }
 static int other_collision(int seat,int actor) {
     if(C.player[seat].dead || !(personal(&C.player[seat],0xB0)&31) || !R(0x300+actor) || R(0x30)>=8)return 1;
@@ -356,7 +356,8 @@ void mm4_coop_end(void) {
      * explicitly owned personal menu retains its live stage contexts. */
     if(C.initialized && !C.menu && R(0x22)>=16){C.initialized=0;C.scene_active=0;C.pending_pause=255;}
     if(C.initialized && !C.menu && R(0x22)<16){C.current=C.anchor;capture(&C.player[C.anchor]);}
-    for(int seat=0;seat<2;seat++)C.player[seat].previous=C.raw[seat];
+    /* Consume personal button edges only when that native controller runs.
+     * Advancing previous here loses a new press on an output-only lag frame. */
 }
 void mm4_coop_build(void) {
     memset(&C.build,0,sizeof C.build);
