@@ -50,7 +50,7 @@ def main():
             print(seat,name,flush=True)
         n=root/'native';i=root/'interp';c=root/'cold';end=n/'end.cycstate'
         rows=[json.loads(x) for x in (n/'frames.jsonl').read_text().splitlines()];last=rows[-1]['coop'];m=memory(end)
-        label=f'seat{seat}-';raw=(n/'scroll.cycstate').read_bytes();at=raw.find(b'M4CA')
+        label=f'seat{seat}-';raw=(n/'scroll.cycstate').read_bytes();at=raw.find(b'M4CB')
         leader=seat^int(v.return_down)
         during=0x82 if v.return_down else (0xA3 if v.vertical else 0x38)
         destination=0x82 if v.return_down else (0x23 if v.vertical else 0x38)

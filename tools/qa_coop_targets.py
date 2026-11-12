@@ -19,7 +19,7 @@ addresses=[base+slot for base in range(0x300,0x5B9,24) for slot in range(5)]+lis
 index={a:i for i,a in enumerate(addresses)}
 
 def personal(path,seat,address):
-    b=Path(path).read_bytes();at=b.find(b'M4CA');assert at>=0
+    b=Path(path).read_bytes();at=b.find(b'M4CB');assert at>=0
     if b[at+8]==seat:return memory(path)[address]
     return b[at+20+seat*386+index[address]]
 
@@ -83,12 +83,12 @@ def main():
         if v.return_state and not v.only_final:cases += [('return',Path(v.return_state),4410,4800,9,s) for s in [0,1]]
         if v.final_state and not v.only_final:
             assert v.return_state and memory(v.final_state)[0xAC]==255,'prior completed refights must have legitimate source evidence'
-            b=Path(v.return_state).read_bytes();cp=b.find(b'M4CA');assert cp>=0 and all(not b[cp+20+s*386+385] for s in [0,1]),'use the both-living first-kill fixture'
+            b=Path(v.return_state).read_bytes();cp=b.find(b'M4CB');assert cp>=0 and all(not b[cp+20+s*386+385] for s in [0,1]),'use the both-living first-kill fixture'
             cases += [('prior-return',Path(v.return_state),4410,4800,9,0)]
         for kind,source,f,end_frame,destination,seat in cases:
             pokes=[];m=memory(source);camera=m[0xF9]*256+m[0xFC]
             if kind=='final':
-                initial=source.read_bytes();cp=initial.find(b'M4CA')
+                initial=source.read_bytes();cp=initial.find(b'M4CB')
                 assert m[0xAC]==255 and cp>=0 and all(not initial[cp+20+s*386+385] for s in [0,1]),'final portal requires both living contexts and disclosed prior completion'
             if kind=='entry':x,y=camera+32,180
             else:
@@ -103,7 +103,7 @@ def main():
             if kind=='prior-return':lines.append(f'{f} POKE 00AC FF')
             label=f'{kind}-portal-{seat}';cut=f+(640 if kind=='final' else 14)
             d=run(label,source,lines,end_frame,pokes,saves=[cut]);end=d/'end.cycstate';m=memory(end)
-            b=end.read_bytes();cp=b.find(b'M4CA');wp=b.find(b'M4WT')
+            b=end.read_bytes();cp=b.find(b'M4CB');wp=b.find(b'M4WT')
             checks[label+'-both-native-destination']=m[0x2A]==destination and all(personal(end,s,0x348)==m[0xF9] and personal(end,s,0x30)<8 for s in [0,1])
             checks[label+'-personal-inventory']=all(personal(end,s,0xA0)==s and personal(end,s,0xB0)&31==[20,14][s] and all(personal(end,s,a)==0x80+5+s*5 for a in range(0xB1,0xBE)) for s in [0,1])
             rows=[json.loads(line) for line in (d/'state.jsonl').read_text().splitlines()]

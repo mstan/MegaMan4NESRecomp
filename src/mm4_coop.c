@@ -31,6 +31,7 @@ typedef struct {
     uint64_t withdrawals[2],rejoins[2];
     uint16_t previous_x[2];
     uint8_t scene_stack;
+    uint8_t checkpoint,revive_pending;
 } Coop;
 static Coop C;
 static int s_on,s_roster,s_scope,s_personal_bhv,s_collision,s_death_wait,s_view;
@@ -279,6 +280,7 @@ static void initialize(void) {
     capture(&C.player[0]);C.player[1]=C.player[0];
     C.player[0].dead=C.player[1].dead=0;
     C.withdrawn=0;memset(C.select_hold,0,sizeof C.select_hold);memset(C.select_armed,0,sizeof C.select_armed);memset(C.teleport,0,sizeof C.teleport);
+    C.checkpoint=R(0x1F);C.revive_pending=0;
     if(C.retry){for(int seat=0;seat<2;seat++)for(int i=0;i<13;i++)set_personal(&C.player[seat],0xB1+i,C.retry_ammo[seat][i]);project(&C.player[0]);C.retry=0;}
     int x=(R(0x348)<<8)|R(0x330);x=x>=32?x-16:x+16;
     set_personal(&C.player[1],0x330,x);set_personal(&C.player[1],0x348,x>>8);
@@ -315,6 +317,26 @@ static void start_arrival(int seat,int x,int y) {
     set_personal(p,0x528,0x80|(R(0x528)&0x60));set_personal(p,0x133,0);set_personal(p,0x134,0);
     C.teleport[seat]=TELE_IN;C.arrival_floor[seat]=(uint8_t)y;p->previous=C.raw[seat];
     memset(C.select_hold,0,sizeof C.select_hold);memset(C.select_armed,0,sizeof C.select_armed);
+}
+static void checkpoint_recovery(void) {
+    int checkpoint=R(0x1F);
+    if(checkpoint!=C.checkpoint){
+        /* Observe the original C7B2 checkpoint result. The survivor must
+         * actually reach it; positioning never supplies a recovery flag. */
+        if(checkpoint>C.checkpoint)for(int seat=0;seat<2;seat++)
+            if(C.player[seat].dead)C.revive_pending|=(uint8_t)(1u<<seat);
+        C.checkpoint=(uint8_t)checkpoint;
+    }
+    if(!C.revive_pending || C.scene_active || A.active || W.active || R(0x19) || R(0x1A))return;
+    for(int seat=0;seat<2;seat++)if(C.revive_pending&(1u<<seat)){
+        if(!C.player[seat].dead){C.revive_pending&=(uint8_t)~(1u<<seat);continue;}
+        if(!mm4_coop_live(seat^1))continue;
+        int x,y;if(!safe_arrival(&x,&y))continue;
+        Player *p=&C.player[seat];
+        set_personal(p,0xB0,(personal(p,0xB0)&0xE0)|28);set_personal(p,0xA0,0);
+        p->dead=0;C.withdrawn|=(uint8_t)(1u<<seat);
+        start_arrival(seat,x,y);C.revive_pending&=(uint8_t)~(1u<<seat);
+    }
 }
 static void depart(int seat) {
     Player *p=&C.player[seat];C.withdrawn|=(uint8_t)(1u<<seat);C.withdrawals[seat]++;C.teleport[seat]=TELE_OUT;
@@ -356,6 +378,7 @@ static int controller(uint16_t address) {
     C.current=C.anchor;capture(&C.player[C.anchor]);
     test_pokes();
     select_tick();
+    checkpoint_recovery();
     for(int seat=0;seat<2;seat++)C.previous_x[seat]=(uint16_t)(personal(&C.player[seat],0x330)+256*personal(&C.player[seat],0x348));
     if(!private_step(C.anchor^1))C.failures++;
     C.current=C.anchor;A.pressed[C.anchor]=(uint8_t)(C.raw[C.anchor]&~C.player[C.anchor].previous&~0x30);
@@ -647,11 +670,11 @@ void mm4_coop_set(int enabled,int roster) {
     nes_mod_set_local_only("MM4 personal co-op (unqualified netplay)",s_on);mm4_view_coop(s_on);
     mm4_coop_view_set(s_view);
 }
-static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4CA",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
+static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4CB",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
 static int valid(const uint8_t *in,int len) {
     if(!len)return !s_on;if(!in || len!=sizeof C)return 0;
     static Coop p;memcpy(&p,in,sizeof p);
-    if(memcmp(p.magic,"M4CA",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.scene_active>2||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2)return 0;
+    if(memcmp(p.magic,"M4CB",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.scene_active>2||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2||p.checkpoint>2||p.revive_pending>3)return 0;
     if(p.initialized && (p.withdrawn&(1u<<p.anchor)))return 0;
     for(int seat=0;seat<2;seat++)if(p.select_hold[seat]>90||p.select_armed[seat]>1||p.teleport[seat]>TELE_IN||p.arrival_floor[seat]>=240||(!p.teleport[seat])!=!(p.withdrawn&(1u<<seat)))return 0;
     const Picture *f[2]={&p.build,&p.frame};
