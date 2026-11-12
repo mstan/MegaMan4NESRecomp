@@ -62,4 +62,8 @@ python tools/qa_route.py tests/routes/coop-boss-equipment.route --frames 6200 --
 
 The targeted boss route initializes the native pre-boss checkpoint and uses temporary invulnerability, boss health and positioning fixtures. Player two's actual shot must trigger defeat; original scripts handle victory, teleport, weapon-get and stage select. Native/interpreter state, pictures and PCM agree, including a cold continuation during the native door script. These bypasses do not establish full-stage or normal boss-fight coverage.
 
-Enemy targeting, complete guest weapon/shield behavior, death/rejoin/checkpoint lifecycle, all views and online behavior remain in development. Co-op is not yet exposed as a launcher package.
+An individual death keeps the partner in control without spending a life. Both the native collision and render-time pit paths retain their native death handling; the living partner keeps stage music. Personal countdowns execute the original timer routine. Once both players are down, one original shared retry spends a life and revives both at full health, with Buster selected and each player's own ammo retained. Either controller can operate global screens; each personal inventory keeps its owner's input.
+
+Targeted checks cover both death orders, actual lethal projectile contacts with sixteen native particles, pits including recoil, survivor movement, both players firing after retry, native/interpreter agreement, and current-build first-picture/PCM continuation. The previous native boss-finisher/victory route remains unchanged. Distant camera handoff, checkpoint/rejoin variants and complete stage coverage remain open.
+
+Enemy targeting, complete guest weapon/shield behavior, withdrawal/rejoin/checkpoint variants, all views and online behavior remain in development. Co-op is not yet exposed as a launcher package.

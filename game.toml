@@ -116,3 +116,51 @@ id = "mm4.coop.before-scroll"
 addr = 0xCB68
 length = 8
 crc32 = 0x17E25815
+
+[[mod_function_hook]]
+id = "mm4.coop.dying"
+addr = 0x8243
+length = 8
+crc32 = 0xC41E03D8
+
+[[mod_function_hook]]
+id = "mm4.coop.death-music"
+addr = 0xF6BC
+length = 8
+crc32 = 0x51A64F23
+
+[[mod_function_hook]]
+id = "mm4.coop.after-world"
+addr = 0xC75A
+length = 8
+crc32 = 0x7F94A83E
+
+[[mod_function_hook]]
+id = "mm4.coop.retry"
+addr = 0xC7F6
+length = 8
+crc32 = 0x6497EB4E
+
+[[mod_function_hook]]
+id = "mm4.coop.arrival"
+addr = 0xC65B
+length = 8
+crc32 = 0x2BFCB732
+
+[[mod_function_hook]]
+id = "mm4.coop.death-wait"
+addr = 0xC7F3
+length = 8
+crc32 = 0x1A19C3F2
+
+[[mod_function_hook]]
+id = "mm4.coop.pit"
+addr = 0xDC1F
+length = 8
+crc32 = 0x21D6CC25
+
+[[mod_function_hook]]
+id = "mm4.coop.frame-end"
+addr = 0xC7CB
+length = 8
+crc32 = 0x30B40B49
