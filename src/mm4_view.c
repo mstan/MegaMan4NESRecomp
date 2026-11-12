@@ -215,10 +215,12 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
         int personal=s_coop?mm4_coop_menu_active():cyc_mod_peek(0x30)<=4;
         return personal?inventory(out,W,H,native):0;
     }
-    if(!mm4_coop_menu_active() && cyc_render_background(s_bg) && panels(out,W,H))return 1;
+    if(!mm4_coop_menu_active() && cyc_render_background(s_bg)) {
+        mm4_world_audit(s_bg);
+        if(panels(out,W,H))return 1;
+    }
     if (cyc_mod_peek(0x22) >= 16 || cyc_mod_peek(0x19) || cyc_mod_peek(0x1A)) return 0;
     if (!(s_enabled || s_wide || s_coop || s_no_flicker) || W < 256 || W > 864 || H != 240 || !cyc_render_background(s_bg)) return 0;
-    mm4_world_audit(s_bg);
     int origin = (W - 256) / 2;
     int replace = s_enabled && s_frame.valid && s_frame.body.active;
     memset(s_opaque, 0, sizeof s_opaque);
