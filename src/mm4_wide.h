@@ -3,6 +3,8 @@
 void mm4_wide_register(void);
 void mm4_wide_power(void);
 void mm4_wide_set(int enabled,const char *aspect);
+void mm4_no_flicker_set(int enabled);
+int mm4_no_flicker_enabled(void);
 void mm4_wide_begin(void);
 void mm4_wide_latch(void);
 void mm4_wide_views_changed(void);
@@ -12,3 +14,4 @@ void mm4_wide_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
 int mm4_wide_rank(int owner);
 int mm4_wide_json(char *out,int cap);
 void mm4_view_wide(int enabled);
+void mm4_view_no_flicker(int enabled);

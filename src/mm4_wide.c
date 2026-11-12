@@ -17,19 +17,19 @@
 enum { MAX_PARTS = 24*63 };
 typedef struct { int16_t x,y; uint8_t owner,attr,pixels[64]; } WidePart;
 typedef struct {
-    uint8_t valid,rank[24],next_rank,reserved;
+    uint8_t valid,rank[24],next_rank,extended;
     uint16_t count,width,camera,left,room_left,room_right;
     Mm4ProtoBody body;
     WidePart parts[MAX_PARTS];
 } WideFrame;
 typedef struct {
-    char magic[4]; uint8_t enabled,reserved[3];
+    char magic[4]; uint8_t enabled,noflicker,reserved[2];
     uint64_t spawns,rendered,full,failed;
     WideFrame build,frame;
     uint8_t seen_stage,seen[128];
 } WideState;
 static WideState S;
-static int s_on;
+static int s_on,s_no_flicker;
 static int in_views(int x,int radius) {
     int left[2];if(!mm4_coop_independent() || !mm4_coop_view_rects(left))return 0;
     return (x+radius>=left[0] && x-radius<left[0]+256) || (x+radius>=left[1] && x-radius<left[1]+256);
@@ -54,11 +54,13 @@ static int geometry(int width, int *camera, int *left, int *lo, int *hi) {
 void mm4_wide_begin(void) {
     memset(&S.build,0,sizeof S.build); memset(S.build.rank,255,sizeof S.build.rank); S.build.next_rank = 1;
     int camera,left,lo,hi,width = mm4_coop_independent()?256:mm4_net_simulation_width(cyc_video_width());
-    if (!geometry(width,&camera,&left,&lo,&hi)) {
-        if(!mm4_coop_independent() || R(0x22)>=16 || R(0x300)!=1)return;
+    int extended=geometry(width,&camera,&left,&lo,&hi);
+    if (!extended) {
+        if((!s_no_flicker && !mm4_coop_independent()) || width<256 || width>CYC_VIDEO_MAX_WIDTH || R(0x22)>=16 || R(0x300)!=1)return;
         camera=(R(0xF9)<<8)|R(0xFC);left=lo=camera;hi=camera+256;
     }
     S.build.valid=1; S.build.width=(uint16_t)width; S.build.camera=(uint16_t)camera;
+    S.build.extended=(uint8_t)extended;
     S.build.left=(uint16_t)left; S.build.room_left=(uint16_t)lo; S.build.room_right=(uint16_t)hi;
 }
 void mm4_wide_latch(void) { S.frame=S.build; }
@@ -68,11 +70,11 @@ static int actor(uint16_t address) {
     if (!S.build.valid || cyc_mod_isolated()) return 0;
     CycModRegs regs; cyc_mod_regs(&regs); int slot=regs.x;
     if (slot>=24) return 0;
-    S.build.rank[slot]=S.build.next_rank++;
+    int complete=s_no_flicker || mm4_coop_independent();
+    S.build.rank[slot]=complete?(uint8_t)(slot+1):S.build.next_rank++;
     int wx=(R(0x348+slot)<<8)|R(0x330+slot), dx=wx-S.build.camera;
-    int complete=mm4_coop_independent();
-    int visible=complete?in_views(wx,32):(wx+32>=S.build.left && wx-32<S.build.left+S.build.width);
-    int widened=slot && !(dx>=32 && dx<224) && visible && !(R(0x2B)&0xC0) && !mm4_coop_scene_locked();
+    int visible=mm4_coop_independent()?in_views(wx,32):(wx+32>=S.build.left && wx-32<S.build.left+S.build.width);
+    int widened=S.build.extended && slot && !(dx>=32 && dx<224) && visible && !(R(0x2B)&0xC0) && !mm4_coop_scene_locked();
     if(!R(0x300+slot) || (!complete && !widened))return 0;
     if (!cyc_mod_isolate_begin()) { S.failed++; return 0; }
     int saved_count=S.build.count;
@@ -205,7 +207,7 @@ int mm4_wide_background(uint32_t *out,int width,int height,const uint32_t *nativ
 }
 int mm4_wide_rank(int owner) { return owner>=0 && owner<24 && S.frame.valid?S.frame.rank[owner]:255; }
 void mm4_wide_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint8_t *claimed,int rank) {
-    int complete=mm4_coop_independent();
+    int complete=s_no_flicker || mm4_coop_independent();
     if ((!s_on && !complete) || !S.frame.valid || (!complete && width<=256)) return;
     /* This frame's origin is explicit. cyc_render_native_origin reports the
      * previously composed frame until the current compositor returns. */
@@ -220,6 +222,9 @@ void mm4_wide_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
         for (int y=0;y<8;y++) for (int x=0;x<8;x++) {
             int v=p->pixels[y*8+x],px=p->x-left+x,py=p->y+y;
             if (!v || px<0 || px>=width || py<0 || py>=240) continue;
+            unsigned mask=cyc_render_line_mask(py);
+            if(!(mask&16) || (!mm4_coop_independent() && px>=origin && px<origin+8 && !(mask&4)))continue;
+            if(!S.frame.extended && !mm4_coop_independent() && (px<origin || px>=origin+256))continue;
             int at=py*width+px;
             if (claimed[at]) continue;
             claimed[at]=1;
@@ -229,9 +234,14 @@ void mm4_wide_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
 }
 void mm4_wide_views_changed(void) {
     int active=s_on || mm4_coop_independent();
-    nes_mod_set_function_hook_enabled("mm4.wide.actor",active);nes_mod_set_function_hook_enabled("mm4.wide.spawn",active);
+    nes_mod_set_function_hook_enabled("mm4.wide.actor",active || s_no_flicker);nes_mod_set_function_hook_enabled("mm4.wide.spawn",active);
     nes_mod_set_function_hook_enabled("mm4.wide.authored",active);nes_mod_set_function_hook_enabled("mm4.wide.born",active);nes_mod_set_function_hook_enabled("mm4.wide.clear",active);
 }
+void mm4_no_flicker_set(int enabled) {
+    s_no_flicker=enabled!=0;mm4_wide_views_changed();mm4_view_no_flicker(s_no_flicker);
+    nes_mod_set_local_only("MM4 complete sprites (unqualified netplay)",s_no_flicker);
+}
+int mm4_no_flicker_enabled(void) {return s_no_flicker;}
 void mm4_wide_set(int enabled,const char *aspect) {
     s_on=enabled!=0;
     int mode=NES_VIDEO_FIT;
@@ -245,16 +255,16 @@ void mm4_wide_set(int enabled,const char *aspect) {
     mm4_view_wide(s_on);
 }
 void mm4_wide_power(void) { memset(&S,0,sizeof S);S.seen_stage=255; }
-static int get(uint8_t *out,int cap) { if (cap<sizeof S)return -1;memcpy(S.magic,"MX03",4);S.enabled=(uint8_t)s_on;memcpy(out,&S,sizeof S);return sizeof S; }
+static int get(uint8_t *out,int cap) { if (cap<sizeof S)return -1;memcpy(S.magic,"MX04",4);S.enabled=(uint8_t)s_on;S.noflicker=(uint8_t)s_no_flicker;memcpy(out,&S,sizeof S);return sizeof S; }
 static int valid(const uint8_t *in,int len) {
-    if (!len)return !(s_on || mm4_coop_independent());
+    if (!len)return !(s_on || s_no_flicker || mm4_coop_independent());
     if (!in || len!=sizeof S)return 0;
     static WideState p;memcpy(&p,in,sizeof p);
-    if (memcmp(p.magic,"MX03",4) || p.enabled!=s_on || (p.seen_stage!=255 && p.seen_stage>=16))return 0;
+    if (memcmp(p.magic,"MX04",4) || p.enabled!=s_on || p.noflicker!=s_no_flicker || (p.seen_stage!=255 && p.seen_stage>=16))return 0;
     for(int i=0;i<128;i++)if(p.seen[i]>1)return 0;
     const WideFrame *f[2]={&p.build,&p.frame};
     for(int j=0;j<2;j++) {
-        if(f[j]->valid>1 || f[j]->count>MAX_PARTS || f[j]->width>CYC_VIDEO_MAX_WIDTH)return 0;
+        if(f[j]->valid>1 || f[j]->extended>1 || f[j]->count>MAX_PARTS || f[j]->width>CYC_VIDEO_MAX_WIDTH)return 0;
         for(int i=0;i<f[j]->count;i++) { if(f[j]->parts[i].owner>=24)return 0;for(int k=0;k<64;k++)if(f[j]->parts[i].pixels[k]>3)return 0; }
     }
     return 1;
@@ -265,4 +275,4 @@ void mm4_wide_register(void) {
     nes_mod_register_function_entry_plugin("mm4.wide.authored",0x8080,authored);nes_mod_register_function_entry_plugin("mm4.wide.born",0x817B,born);nes_mod_register_function_entry_plugin("mm4.wide.clear",0x85AD,clear);
     nes_mod_register_savestate_hook("mm4.wide",get,set);nes_mod_register_savestate_validator("mm4.wide",valid);
 }
-int mm4_wide_json(char *out,int cap) { return snprintf(out,cap,"\"wide\":{\"on\":%d,\"width\":%u,\"parts\":%u,\"spawns\":%llu,\"rendered\":%llu,\"full\":%llu,\"failed\":%llu}",s_on,S.frame.width,S.frame.count,(unsigned long long)S.spawns,(unsigned long long)S.rendered,(unsigned long long)S.full,(unsigned long long)S.failed); }
+int mm4_wide_json(char *out,int cap) { return snprintf(out,cap,"\"wide\":{\"on\":%d,\"noflicker\":%d,\"width\":%u,\"parts\":%u,\"spawns\":%llu,\"rendered\":%llu,\"full\":%llu,\"failed\":%llu}",s_on,s_no_flicker,S.frame.width,S.frame.count,(unsigned long long)S.spawns,(unsigned long long)S.rendered,(unsigned long long)S.full,(unsigned long long)S.failed); }

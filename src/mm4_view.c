@@ -19,7 +19,7 @@ typedef struct {
     Mm4ProtoBody body;
 } ViewFrame;
 static ViewFrame s_build, s_frame;
-static int s_enabled,s_wide,s_coop,s_capture_policy=-1,s_panel_drawing;
+static int s_enabled,s_wide,s_coop,s_no_flicker,s_capture_policy=-1,s_panel_drawing;
 static uint32_t s_bg[256 * 240];
 static uint8_t s_opaque[864 * 240], s_allowed[64][240];
 static uint8_t s_claimed[864 * 240];
@@ -194,14 +194,14 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
     }
     if(!mm4_coop_menu_active() && cyc_render_background(s_bg) && panels(out,W,H))return 1;
     if (cyc_mod_peek(0x22) >= 16 || cyc_mod_peek(0x19) || cyc_mod_peek(0x1A)) return 0;
-    if (!(s_enabled || s_wide || s_coop) || W < 256 || W > 864 || H != 240 || !cyc_render_background(s_bg)) return 0;
+    if (!(s_enabled || s_wide || s_coop || s_no_flicker) || W < 256 || W > 864 || H != 240 || !cyc_render_background(s_bg)) return 0;
     mm4_world_audit(s_bg);
     int origin = (W - 256) / 2;
     int replace = s_enabled && s_frame.valid && s_frame.body.active;
     memset(s_opaque, 0, sizeof s_opaque);
     int wide=mm4_wide_background(out,W,H,s_bg,s_opaque,&origin);
     {
-        if (!replace && !wide && !s_coop) return 0;
+        if (!replace && !wide && !s_coop && !s_no_flicker) return 0;
         if(!wide) {
             for (int i = 0; i < W * H; ++i) out[i] = 0xFF000000u;
             for (int y = 0; y < H; ++y) memcpy(out + y * W + origin, s_bg + y * 256, 256 * sizeof *out);
@@ -216,7 +216,7 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
     int first = 64;
     for (int slot = 0; slot < 64; ++slot) {
         int top = oam[slot * 4] + 1, height = cyc_render_line_sprite16(top < 240 ? top : 239) ? 16 : 8;
-        for (int y = top; y < top + height && y < 240; ++y) s_allowed[slot][y] = counts[y]++ < 8;
+        for (int y = top; y < top + height && y < 240; ++y) s_allowed[slot][y] = s_no_flicker || counts[y]++ < 8;
         if (s_frame.owners[slot] == 0 && slot < first) first = slot;
     }
     cyc_render_set_native_origin(origin);
@@ -228,6 +228,7 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
         int owner = s_frame.owners[slot];
         int rank=mm4_wide_rank(owner);
         if(rank!=255)while(drawn_rank<rank)mm4_wide_draw(out,W,origin,s_opaque,s_claimed,++drawn_rank);
+        if(s_no_flicker && owner<24 && rank!=255)continue;
         if (replace && owner == 0) { if (slot == first) character_body(out, W, origin, &s_frame.body); }
         else if(!mm4_hud_native_meter(oam+slot*4))sprite(out, W, origin, slot, oam);
     }
@@ -240,10 +241,10 @@ void mm4_view_power(void) {
     memset(&s_build, 0, sizeof s_build); memset(s_build.owners, 255, sizeof s_build.owners);
     memset(&s_frame, 0, sizeof s_frame); memset(s_frame.owners, 255, sizeof s_frame.owners);
     mm4_hud_reset();
-    s_capture_policy=s_enabled || s_wide || s_coop;cyc_render_capture_background(s_capture_policy!=0);
+    s_capture_policy=s_enabled || s_wide || s_coop || s_no_flicker;cyc_render_capture_background(s_capture_policy!=0);
 }
 static void refresh(void) {
-    int active = s_enabled || s_wide || s_coop;
+    int active = s_enabled || s_wide || s_coop || s_no_flicker;
     nes_mod_set_function_hook_enabled("mm4.view.begin", active);
     nes_mod_set_function_hook_enabled("mm4.view.part", active);
     nes_mod_set_function_hook_enabled("mm4.view.dma", active);
@@ -254,6 +255,7 @@ static void refresh(void) {
 void mm4_view_enable(int enabled) { s_enabled = enabled != 0; refresh(); }
 void mm4_view_wide(int enabled) {s_wide=enabled!=0;refresh();}
 void mm4_view_coop(int enabled) {s_coop=enabled!=0;refresh();}
+void mm4_view_no_flicker(int enabled) {s_no_flicker=enabled!=0;refresh();}
 static int get(uint8_t *out, int cap) {
     if (cap < sizeof s_frame + sizeof s_build) return -1;
     memcpy(s_build.magic, "MV02", 4); memcpy(s_frame.magic, "MV02", 4);
@@ -261,7 +263,7 @@ static int get(uint8_t *out, int cap) {
     return sizeof s_build + sizeof s_frame;
 }
 static int valid(const uint8_t *in, int len) {
-    if (!len) return !(s_enabled || s_wide || s_coop);
+    if (!len) return !(s_enabled || s_wide || s_coop || s_no_flicker);
     if (!in || len != sizeof s_build + sizeof s_frame) return 0;
     ViewFrame frames[2]; memcpy(frames, in, sizeof frames);
     for (int i = 0; i < 2; ++i) {

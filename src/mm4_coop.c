@@ -16,7 +16,7 @@
 #include <string.h>
 #define R(a) cyc_mod_peek((uint16_t)(a))
 #define P(a,v) cyc_mod_poke((uint16_t)(a),(uint8_t)(v))
-enum { PERSONAL_CAP=384, PART_CAP=96 };
+enum { PERSONAL_CAP=384, PART_CAP=5*63 };
 enum { TELE_NONE, TELE_OUT, TELE_HIDDEN, TELE_IN };
 typedef struct { uint8_t ram[PERSONAL_CAP],previous,dead; } Player;
 typedef struct { int16_t x,y;uint8_t owner,attr,colors[4],pixels[64]; } Part;
@@ -524,28 +524,28 @@ void mm4_coop_build(void) {
     s_scope=1;int enabled=hooks(1);
     int art=mm4_controls_art(R(0xa0));
     P(0x97,4);for(int i=0;i<256;i+=4)P(0x200+i,248);
-    uint8_t part_owner[64];memset(part_owner,255,sizeof part_owner);
-    int ok=art && enabled,body=0;
+    int ok=art && enabled,body=0,complete=mm4_no_flicker_enabled() || mm4_coop_independent();
     for(int slot=0;slot<5 && ok;slot++) {
         if(!R(0x300+slot))continue;
+        /* Capture each actor into its own native OAM scratch when drawing
+         * complete sprites. One busy helper cannot truncate later weapons. */
+        if(complete){P(0x97,4);for(int i=0;i<256;i+=4)P(0x200+i,248);}
         int begin=R(0x97);CycModRegs r;cyc_mod_regs(&r);r.x=(uint8_t)slot;P(0x96,slot);
         ok=cyc_mod_call(0xDB72,&r);int end=R(0x97);if(!end)end=256;
-        for(int offset=begin;offset<end;offset+=4)part_owner[offset/4]=(uint8_t)slot;
         if(!slot && end>begin){mm4_proto_body(&C.build.body);C.build.body.x+=(int16_t)(camera-C.build.camera);body=1;}
-        if(end==256)break;
-    }
-    int end=R(0x97);if(!end)end=256;
-    for(int offset=4;ok && offset<end && C.build.count<PART_CAP;offset+=4) {
-        int top=R(0x200+offset)+1;if(top>=240)continue;
-        Part *p=&C.build.parts[C.build.count++];p->x=(int16_t)(camera+R(0x203+offset));p->y=(int16_t)top;
-        p->owner=part_owner[offset/4];p->attr=R(0x202+offset);
-        int tile=R(0x201+offset),table=cyc_render_line_sprite_table(top);
-        for(int i=0;i<4;i++)p->colors[i]=R(0x610+(p->attr&3)*4+i)&63;
-        for(int y=0;y<8;y++) {
-            int row=(p->attr&128)?7-y:y,a=table+tile*16+row;
-            int low=mm4_controls_pattern(R(0xa0),a),high=mm4_controls_pattern(R(0xa0),a+8);
-            for(int x=0;x<8;x++){int bit=(p->attr&64)?x:7-x;p->pixels[y*8+x]=(uint8_t)(((low>>bit)&1)|(((high>>bit)&1)<<1));}
+        for(int offset=begin;ok && offset<end && C.build.count<PART_CAP;offset+=4) {
+            int top=R(0x200+offset)+1;if(top>=240)continue;
+            Part *p=&C.build.parts[C.build.count++];p->x=(int16_t)(camera+R(0x203+offset));p->y=(int16_t)top;
+            p->owner=(uint8_t)slot;p->attr=R(0x202+offset);
+            int tile=R(0x201+offset),table=cyc_render_line_sprite_table(top);
+            for(int i=0;i<4;i++)p->colors[i]=R(0x610+(p->attr&3)*4+i)&63;
+            for(int y=0;y<8;y++) {
+                int row=(p->attr&128)?7-y:y,a=table+tile*16+row;
+                int low=mm4_controls_pattern(R(0xa0),a),high=mm4_controls_pattern(R(0xa0),a+8);
+                for(int x=0;x<8;x++){int bit=(p->attr&64)?x:7-x;p->pixels[y*8+x]=(uint8_t)(((low>>bit)&1)|(((high>>bit)&1)<<1));}
+            }
         }
+        if(!complete && end==256)break;
     }
     int died=C.player[seat].dead!=0;
     if(ok){capture(&C.player[seat]);C.build.valid=1;C.build.seat=(uint8_t)seat;if(!body)C.build.body.active=0;if(died)snapshot_ram(after);}else C.failures++;
@@ -562,6 +562,8 @@ void mm4_coop_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
         for(int y=0;y<8;y++)for(int x=0;x<8;x++) {
             int value=p->pixels[y*8+x],px=p->x-C.frame.camera+origin+x,py=p->y+y;
             if(!value || px<0 || px>=width || py<0 || py>=240)continue;
+            unsigned mask=cyc_render_line_mask(py);
+            if(!(mask&16) || (!mm4_coop_independent() && px>=origin && px<origin+8 && !(mask&4)))continue;
             int at=py*width+px;if(claimed[at])continue;claimed[at]=1;
             if(!(p->attr&32)||!opaque[at])out[at]=cyc_render_color_value(p->colors[value]);
         }
@@ -577,11 +579,11 @@ void mm4_coop_set(int enabled,int roster) {
     nes_mod_set_local_only("MM4 personal co-op (unqualified netplay)",s_on);mm4_view_coop(s_on);
     mm4_coop_view_set(s_view);
 }
-static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4C7",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
+static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4C8",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;memcpy(out,&C,sizeof C);return sizeof C;}
 static int valid(const uint8_t *in,int len) {
     if(!len)return !s_on;if(!in || len!=sizeof C)return 0;
     static Coop p;memcpy(&p,in,sizeof p);
-    if(memcmp(p.magic,"M4C7",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.scene_active>1||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2)return 0;
+    if(memcmp(p.magic,"M4C8",4)||p.enabled!=s_on||p.roster!=s_roster||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.scene_active>1||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2)return 0;
     if(p.initialized && (p.withdrawn&(1u<<p.anchor)))return 0;
     for(int seat=0;seat<2;seat++)if(p.select_hold[seat]>90||p.select_armed[seat]>1||p.teleport[seat]>TELE_IN||p.arrival_floor[seat]>=240||(!p.teleport[seat])!=!(p.withdrawn&(1u<<seat)))return 0;
     const Picture *f[2]={&p.build,&p.frame};

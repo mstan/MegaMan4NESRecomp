@@ -19,7 +19,7 @@ env=dict(os.environ,NESRECOMP_NO_LAUNCHER='1',SDL_VIDEODRIVER='dummy',SDL_AUDIOD
 addresses=[base+slot for base in range(0x300,0x5B9,24) for slot in range(5)]+list(range(0x30,0x40))+[0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0xA0,0xAD]+list(range(0xB0,0xBE))+[a+i for i in range(8) for a in [0x610,0x630]]+[0x131,0x138,0x133,0x134]
 
 def personal(path,seat,address):
-    b=path.read_bytes();pos=b.find(b'M4C7');assert pos>=0
+    b=path.read_bytes();pos=b.find(b'M4C8');assert pos>=0
     if b[pos+8]!=seat:return b[pos+20+seat*386+addresses.index(address)]
     at=32
     while at<len(b):
@@ -40,6 +40,7 @@ for seat in [0,1]:
         for who,hp,ammo in [(0,0x94,0x8D),(1,0x91,0x91)]:
             for a,val in [(0xB0,hp),(0xB1,ammo)]:argv+=['--mm4-coop-poke',f'2420:{who}:{a:X}:{val:X}']
         if load:argv+=['--load-state',str(root/'native'/(load+'.cycstate'))]
+        argv+=['--no-flicker','on']
         if name=='interp':argv+=['--interp-only']
         with (d/'run.log').open('w') as log:q=subprocess.run(argv,stdout=log,stderr=subprocess.STDOUT,env=env,creationflags=(subprocess.CREATE_NO_WINDOW|subprocess.BELOW_NORMAL_PRIORITY_CLASS) if os.name=='nt' else 0,timeout=180)
         assert q.returncode==0,(name,q.returncode)

@@ -70,16 +70,17 @@ static void timing(unsigned lines) {
 }
 static void loaded(void *ctx) {(void)ctx;timing(s_extra_lines);}
 Mm4Settings mm4_host_settings(void) {
-    Mm4Settings c={s_coop,mm4_coop_independent(),s_roster,mm4_proto_enabled(),s_proto_mode,s_proto_start,s_on,s_wide,(int)s_extra_lines};return c;
+    Mm4Settings c={s_coop,mm4_coop_independent(),s_roster,mm4_proto_enabled(),s_proto_mode,s_proto_start,s_on,s_wide,mm4_no_flicker_enabled(),(int)s_extra_lines};return c;
 }
 int mm4_host_apply_settings(Mm4Settings c,int local_seat) {
     s_coop=c.coop;s_roster=c.roster;s_proto_on=c.proto;s_proto_mode=c.mode;s_proto_start=c.start;s_wide=c.wide;
     if(!mm4_proto_set(c.proto,c.mode,c.start))return 0;
-    enabled(c.weapons);mm4_wide_set(c.wide,"fit");timing((unsigned)c.lines);
+    enabled(c.weapons);mm4_wide_set(c.wide,"fit");mm4_no_flicker_set(c.flicker);timing((unsigned)c.lines);
     int view=s_preferred_view;mm4_coop_set(c.coop,c.roster);
     mm4_host_view_set(c.independent?(view?view:(local_seat==1?3:2)):0);return 1;
 }
 static void activate_slowdown(void) {if(!mm4_net_locked())timing(262);}
+static void activate_noflicker(void) {if(!mm4_net_locked())mm4_no_flicker_set(1);}
 
 /* Native DA05's graphics packets contain bank, page count, source page and
  * destination PPU page. Decode the same user-owned bytes without executing
@@ -184,6 +185,10 @@ static void frame_end(void *ctx) {
 static bool option(void *ctx,const char *name,const char *value) {
     (void)ctx;mm4_net_note_option(name);
     if(mm4_net_locked() && strcmp(name,"--coop-view"))return false;
+    if(!strcmp(name,"--no-flicker")) {
+        if(strcmp(value,"on") && strcmp(value,"off"))return false;
+        mm4_no_flicker_set(!strcmp(value,"on"));return true;
+    }
     if(!strcmp(name,"--slowdown-reduction")) {
         if(strcmp(value,"on") && strcmp(value,"off"))return false;
         timing(!strcmp(value,"on")?262:0);return true;
@@ -247,7 +252,7 @@ static int valid(const uint8_t *in,int len) {
     return 1;
 }
 static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(s_players,in,sizeof s_players);else memset(s_players,0,sizeof s_players);return 1;}
-static void reset(void) {if(mm4_net_locked())return;timing(0);enabled(0);s_coop=0;mm4_coop_set(0,s_roster);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);}
+static void reset(void) {if(mm4_net_locked())return;timing(0);enabled(0);s_coop=0;mm4_coop_set(0,s_roster);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);mm4_no_flicker_set(0);}
 static void activate(void) {if(!mm4_net_locked())enabled(1);}
 static void activate_wide(void) {
     if(mm4_net_locked())return;
@@ -320,11 +325,13 @@ NES_MOD_CONSTRUCTOR(register_mm4_controls) {
     nes_mod_register_activation_plugin("mega-man-4-usa.widescreen",activate_wide);
     nes_mod_register_activation_plugin("mega-man-4-usa.coop",activate_coop);
     nes_mod_register_activation_plugin("mega-man-4-usa.slowdown",activate_slowdown);
+    nes_mod_register_activation_plugin("mega-man-4-usa.noflicker",activate_noflicker);
 }
 const CycHostExtras *cyc_host_extras(void) {
     static const CycInputProfile profile={.id="megaman-weapons-1",.game_label={"Previous weapon (L)","Next weapon (R)"},
         .game_pad={"leftshoulder","rightshoulder"},.shortcut_pad={"none","leftstick+rightstick",NULL,NULL,NULL,NULL,NULL}};
-    static const CycHostOption options[]={{"--slowdown-reduction",true,"on|off: extra native CPU budget at the normal video/audio rate"},
+    static const CycHostOption options[]={{"--no-flicker",true,"on|off: complete native actors without sprite-limit flicker"},
+        {"--slowdown-reduction",true,"on|off: extra native CPU budget at the normal video/audio rate"},
         {"--weapon-cycle",true,"on|off: cycle acquired weapons and helpers with L/R"},
         {"--coop-view",true,"shared|split|player1|player2: local co-op presentation"},
         {"--mm4-coop-poke",true,"FRAME:SEAT:HEX_ADDRESS:HEX_VALUE: personal QA prerequisite"},

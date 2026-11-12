@@ -29,6 +29,17 @@ The check exercises acquired, locked and empty equipment, native/interpreter exe
 
 For fresh-boot QA, `--mm4-qa-entry stage,page,room,art,palette,checkpoint` supplies a one-time entry to the original level initializer. Values are decimal. Initial areas use page, room, art, palette and checkpoint zero; checkpoint records come from the cartridge's native entry table. The original routines still load graphics, terrain, palettes, actors and the arrival sequence. This option is separate from the launcher and disables netplay. It does not write boss defeat, unlock or progression flags, and is not reapplied after a stage clear.
 
+## Sprite display
+
+No sprite flicker is enabled by default and works independently of widescreen. It draws complete native actors in stable priority beyond the original scanline and OAM display limits. Intentional animation hiding, the native PPU sprite-enable flag and native-width left-edge masking remain intact. Co-op renders each personal actor separately so a busy helper cannot truncate later weapon artwork. Use `--no-flicker on|off` for development comparisons.
+
+```text
+python -m pip install Pillow
+python tools/qa_noflicker.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/noflicker
+```
+
+This check supplies an explicit native-actor crowd, verifies the fresh catalog default, native and wide composition, intentional hiding, interpreter agreement, and current-build state/picture/PCM continuation. It compares the original NES frame, CPU/RAM and audio with the mod disabled. The controlled population is a rendering prerequisite, separate from authored spawning and stage coverage.
+
 ## Proto Man
 
 Enable the optional Proto Man package in Mods. Its starting-character setting chooses Mega Man or Proto Man. Select swaps characters with a 32-frame teleport, preserves HP and equipment, cancels charge, and protects the player during the beam animation. Native slide, charge, weapon and helper mechanics remain available to both characters.
