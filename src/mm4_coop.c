@@ -660,10 +660,14 @@ void mm4_coop_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
     int painted=0;
     for(int i=0;i<C.frame.count;i++) {
         const Part *p=&C.frame.parts[i];
-        if(!p->owner && C.frame.body.active) {if(!painted){mm4_view_draw_character(out,width,origin,&C.frame.body);painted=1;}continue;}
+        if(!p->owner && C.frame.body.active) {
+            if(!painted){mm4_view_draw_character(out,width,origin,&C.frame.body);painted=1;}
+            if(C.frame.body.state!=4 || C.frame.body.weapon!=3)continue;
+        }
         for(int y=0;y<8;y++)for(int x=0;x<8;x++) {
             int value=p->pixels[y*8+x],px=p->x-C.frame.camera+origin+x,py=p->y+y;
             if(!value || px<0 || px>=width || py<0 || py>=240)continue;
+            if(!p->owner && C.frame.body.active && !mm4_view_native_body_pixel(&C.frame.body,origin,px,py))continue;
             unsigned mask=cyc_render_line_mask(py);
             if(!(mask&16) || (!mm4_coop_independent() && px>=origin && px<origin+8 && !(mask&4)))continue;
             int at=py*width+px;if(claimed[at])continue;claimed[at]=1;
