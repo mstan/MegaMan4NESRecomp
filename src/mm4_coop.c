@@ -894,12 +894,20 @@ void mm4_coop_build(void) {
         /* Capture each actor into its own native OAM scratch when drawing
          * complete sprites. One busy helper cannot truncate later weapons. */
         if(complete){P(0x97,4);for(int i=0;i<256;i+=4)P(0x200+i,248);}
+        /* The native draw also retires offscreen shots. Use the same widened
+         * actor rectangle as the primary renderer, retaining native animation
+         * and culling while capturing each personal actor in its own scratch. */
+        int draw_camera=camera;
+        if(mm4_wide_personal_camera(slot,&draw_camera)) {
+            P(0xFC,draw_camera);P(0xF9,draw_camera>>8);
+        }
         int begin=R(0x97);CycModRegs r;cyc_mod_regs(&r);r.x=(uint8_t)slot;P(0x96,slot);
         ok=cyc_mod_call(0xDB72,&r);int end=R(0x97);if(!end)end=256;
+        P(0xFC,camera);P(0xF9,camera>>8);
         if(!slot && end>begin){mm4_proto_body(&C.build.body);C.build.body.x+=(int16_t)(camera-C.build.camera);body=1;}
         for(int offset=begin;ok && offset<end && C.build.count<PART_CAP;offset+=4) {
             int top=R(0x200+offset)+1;if(top>=240)continue;
-            Part *p=&C.build.parts[C.build.count++];p->x=(int16_t)(camera+R(0x203+offset));p->y=(int16_t)top;
+            Part *p=&C.build.parts[C.build.count++];p->x=(int16_t)(draw_camera+R(0x203+offset));p->y=(int16_t)top;
             p->owner=(uint8_t)slot;p->attr=R(0x202+offset);
             int tile=R(0x201+offset),table=cyc_render_line_sprite_table(top);
             for(int i=0;i<4;i++)p->colors[i]=R(0x610+(p->attr&3)*4+i)&63;

@@ -164,4 +164,12 @@ python tools/qa_coop_withdraw.py --exe build/Release/MegaMan4Recomp.exe --rom "/
 
 This targeted check exercises each player, last-player protection, retained equipment, native beam scripts, native/interpreter agreement, and current-build state/picture/PCM continuation during departure and return. Its stationary room suppresses enemies and supplies explicit HP/ammo prerequisites.
 
-Native enemy AI targets the nearest living player, including that player's consumed input. Either player can enter and return from native refight portals; original map and boss-intro scripts carry both players while preserving personal equipment. Additional weapon/world effects, lifecycle variants, final online UI/lobby/reconnect and release qualification remain in development. The online settings adapter seals the gameplay profile and restores offline runtime and catalog preferences on exit; final release qualification remains separate.
+Native enemy AI targets the nearest living player, including that player's consumed input. Either player can enter and return from native refight portals; original map and boss-intro scripts carry both players while preserving personal equipment. Lifecycle variants, final online UI/lobby/reconnect and release qualification remain in development. The online settings adapter seals the gameplay profile and restores offline runtime and catalog preferences on exit; final release qualification remains separate.
+
+Flash Stopper and Rain Flush share one native world clock while retaining personal costs. Rain can damage frozen enemies. A pending freeze expires even if its caster withdraws or co-op is disabled. Current-build snapshots retain the effect clock across native controller waits.
+
+Pharaoh Shot retains each player's linked charge orb, release projectile and energy. Guest weapons use the primary renderer's widened bounds, so shots remain active and visible through adaptive margins before native retirement. The focused check covers both owners, simultaneous charging, NoF on/off, native/interpreter agreement and cold continuation:
+
+```text
+python tools/qa_coop_linked.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --root qa/linked --qualify
+```

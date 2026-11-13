@@ -65,6 +65,14 @@ void mm4_wide_begin(void) {
 }
 void mm4_wide_latch(void) { S.frame=S.build; }
 int mm4_wide_camera(void) {return S.frame.camera;}
+int mm4_wide_personal_camera(int slot,int *camera) {
+    if(slot<1 || slot>4 || !S.build.valid || !S.build.extended)return 0;
+    int wx=(R(0x348+slot)<<8)|R(0x330+slot),dx=wx-*camera;
+    int visible=mm4_coop_independent()?in_views(wx,32):
+        (wx+32>=S.build.left && wx-32<S.build.left+S.build.width);
+    if(!visible || (dx>=32 && dx<224) || mm4_coop_scene_locked())return 0;
+    *camera=wx-128;return 1;
+}
 static int actor(uint16_t address) {
     (void)address;
     if (!S.build.valid || cyc_mod_isolated()) return 0;
