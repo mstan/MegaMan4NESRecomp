@@ -68,6 +68,16 @@ The check compares native and interpreter execution, decodes terrain against the
 
 Enable the optional Co-op package in Mods, or use `--coop on` for development checks. It provides separate native player, weapon and helper contexts, guest sprite rendering, and either player's native inventory with input assigned to its owner. `--coop-roster protoman-megaman` reverses the default Mega Man / Proto Man order. Personal actors are slots 0–4; native world actors in slots 5–23 remain shared. Guest weapon artwork is read from cartridge packets without private CHR-RAM uploads.
 
+Marine boarding and fuel stay personal. Each controller runs the original native boarding and fuel cost. A guest's last-unit dismount retains the original cost and animation while its immutable cartridge artwork replaces the unnecessary guest PPU upload wait. Mounted and on-foot Marine body patterns use their original asset streams, independently of the other player's current form. Proto Man replaces only the cockpit helmet. The complete 621-pixel native Marine sprite matches the original viewport's decoded OAM; separate cockpit checks cover both players, shared/split views and No sprite flicker off. Native world sprites retain their occlusion.
+
+```text
+python tools/qa_coop_helpers.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --root qa/marine --helper marine --qualify
+```
+
+This bounded check uses native summon/boarding input, then one remaining fuel unit and movement inside the water. Both ownership directions must exhaust their own fuel, dismount alive and retain the other player's fuel. Native/interpreter state, pictures and audio agree, including current-build first-picture/PCM continuation near depletion.
+
+Changing a presentation option in Mods retains live co-op bodies, inventories and pending wait-for-both positions when co-op remains selected. The catalog's synchronous reset/activation pass does not create a new team.
+
 Split and individual views give each player a usable native inventory page with their own cursor, health, ammo, equipment and character portrait. Either living player can pause; only the pauser can resume, using A or Start on an equipment row. The other player can choose equipment without resuming. Lives and E-tanks stay shared. Simultaneous E-tank requests use player order and the original refill routine, with one tank spent for one recipient. Both equipment choices are retained when they arrive on the pauser's closing tick. Shared view retains the original single-page inventory.
 
 ```text
@@ -146,4 +156,4 @@ python tools/qa_coop_withdraw.py --exe build/Release/MegaMan4Recomp.exe --rom "/
 
 This targeted check exercises each player, last-player protection, retained equipment, native beam scripts, native/interpreter agreement, and current-build state/picture/PCM continuation during departure and return. Its stationary room suppresses enemies and supplies explicit HP/ammo prerequisites.
 
-Native enemy AI targets the nearest living player, including that player's consumed input. Either player can enter and return from native refight portals; original map and boss-intro scripts carry both players while preserving personal equipment. Complete guest weapon/helper behavior, checkpoint variants, independent inventories, vertical/wait-for-both transitions, and the final online UI/lobby/reconnect qualification remain in development. The online settings adapter seals the gameplay profile and restores offline runtime and catalog preferences on exit; final release qualification remains separate.
+Native enemy AI targets the nearest living player, including that player's consumed input. Either player can enter and return from native refight portals; original map and boss-intro scripts carry both players while preserving personal equipment. Additional weapon/world effects, lifecycle variants, final online UI/lobby/reconnect and release qualification remain in development. The online settings adapter seals the gameplay profile and restores offline runtime and catalog preferences on exit; final release qualification remains separate.

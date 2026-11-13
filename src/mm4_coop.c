@@ -221,6 +221,7 @@ static int hooks(int enable) {
             int allowed=!strcmp(h->id,"mm4.proto.shot") || !strcmp(h->id,"mm4.proto.muzzle") || !strcmp(h->id,"mm4.proto.damage");
             allowed|=!strcmp(h->id,"mm4.proto.shield") || !strcmp(h->id,"mm4.proto.skip-reflected");
             allowed|=!strcmp(h->id,"mm4.coop.personal-end");
+            allowed|=!strcmp(h->id,"mm4.coop.marine-out");
             allowed|=!strcmp(h->id,"mm4.coop.dying") || !strcmp(h->id,"mm4.coop.pit") || !strcmp(h->id,"mm4.coop.death-music") || !strcmp(h->id,"mm4.coop.death-wait");
             if(h->enabled && !allowed)nes_mod_set_function_hook_enabled(h->id,0);
         }
@@ -464,6 +465,16 @@ static int personal_end(uint16_t address) {
     return 0;
 }
 static int world_begin(uint16_t address) { (void)address;if(s_on && C.initialized && !cyc_mod_isolated())C.world_updates++;return 0; }
+static int marine_out(uint16_t address) {
+    (void)address;
+    if(!s_on || !s_scope || !cyc_mod_isolated() || R(0x30)!=4 || R(0xA0)!=3 || (R(0xB3)&127))return 0;
+    /* Native FD75 has spent the last fuel and F446 selected the on-foot
+     * animation. A guest uses immutable cartridge patterns, so its native
+     * CHR upload and FF1C/NMI wait have no PPU work to publish. Finish the
+     * original controller tail without blocking this unclocked call. */
+    P(0x30,0);CycModRegs r;cyc_mod_regs(&r);r.a=r.x=0;
+    r.p=(uint8_t)((r.p&~0x82)|2);cyc_mod_set_regs(&r);return 1;
+}
 static int dying(uint16_t address){
     (void)address;if(!s_on || !C.initialized || (cyc_mod_isolated() && !s_scope))return 0;
     C.player[C.current].dead=1;
@@ -865,11 +876,17 @@ void mm4_coop_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
 void mm4_coop_power(void) { memset(&C,0,sizeof C);memset(&A,0,sizeof A);memset(&W,0,sizeof W);C.pending_pause=255;s_scope=s_personal_bhv=s_collision=s_death_wait=0;addresses();mm4_menu_reset(); }
 static const char *const HOOKS[]={"mm4.coop.controller","mm4.coop.after-controller","mm4.coop.personal-end","mm4.coop.world-begin","mm4.coop.pause","mm4.coop.after-scroll","mm4.coop.before-scroll","mm4.coop.dying","mm4.coop.death-music","mm4.coop.after-world","mm4.coop.retry","mm4.coop.arrival","mm4.coop.death-wait","mm4.coop.pit","mm4.coop.frame-end","mm4.coop.before-director","mm4.coop.before-vertical","mm4.coop.after-vertical","mm4.coop.scene-draw"};
 void mm4_coop_set(int enabled,int roster) {
-    finish_wait();
-    if(enabled)mm4_proto_cancel_swap();
-    s_on=enabled!=0;s_roster=roster!=0;C.initialized=0;C.current=C.anchor=0;C.pending_pause=255;
-    C.menu=C.menu_ready=C.menu_busy=0;
+    int on=enabled!=0,roles=roster!=0;
+    /* The catalog reapplies every feature after any option changes. An
+     * unrelated presentation setting must retain both live player contexts. */
+    if(on!=s_on || roles!=s_roster) {
+        finish_wait();if(on)mm4_proto_cancel_swap();
+        C.initialized=0;C.current=C.anchor=0;C.pending_pause=255;
+        C.menu=C.menu_ready=C.menu_busy=0;
+    }
+    s_on=on;s_roster=roles;
     nes_mod_set_function_hook_enabled("mm4.coop.menu-idle",s_on);
+    nes_mod_set_function_hook_enabled("mm4.coop.marine-out",s_on);
     for(int i=0;i<sizeof HOOKS/sizeof *HOOKS;i++)nes_mod_set_function_hook_enabled(HOOKS[i],s_on);
     source_hooks();
     nes_mod_set_function_hook_enabled("mm4.coop.target-begin",s_on);nes_mod_set_function_hook_enabled("mm4.coop.target-end",s_on);
@@ -908,6 +925,7 @@ static int warp_get(uint8_t *out,int cap){if(cap<sizeof W)return -1;memcpy(W.mag
 static int warp_valid(const uint8_t *in,int n){Warp p;if(!n)return !W.active;if(!in||n!=sizeof p)return 0;memcpy(&p,in,sizeof p);return !memcmp(p.magic,"M4WT",4)&&p.active<=2&&!p.reserved[0]&&!p.reserved[1];}
 static int warp_set(const uint8_t *in,int n){if(!warp_valid(in,n))return 0;if(n)memcpy(&W,in,sizeof W);else memset(&W,0,sizeof W);return 1;}
 void mm4_coop_register(void) {
+    nes_mod_register_function_entry_plugin("mm4.coop.marine-out",0x8530,marine_out);
     nes_mod_register_function_entry_plugin("mm4.coop.source-start",0xC5A6,source_start);
     nes_mod_register_function_entry_plugin("mm4.coop.source-loaded",0xC5C4,source_loaded);
     mm4_menu_register();nes_mod_register_function_entry_plugin("mm4.coop.menu-idle",0x96D7,menu_idle);

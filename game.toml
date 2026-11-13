@@ -249,3 +249,9 @@ id = "mm4.coop.source-start"
 addr = 0xC5A6
 length = 8
 crc32 = 0xB9BEFF31
+
+[[mod_function_hook]]
+id = "mm4.coop.marine-out"
+addr = 0x8530
+length = 8
+crc32 = 0xF353C5F1

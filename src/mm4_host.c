@@ -116,8 +116,27 @@ static int safe_for_seat(int seat) {
 }
 static int safe(void) {return safe_for_seat(mm4_coop_seat());}
 int mm4_controls_art(int weapon) {return weapon>=0 && weapon<=13 && graphics(weapon,0) && graphics(weapon,1);}
+static int marine_pattern(unsigned address) {
+    /* Native boarding streams16; dismount streams4A. These common body
+     * patterns are separate from weapon33's projectile/helper packets. */
+    int mounted=ram(0x30)==4 || (ram(0x30)==6 && ram(0x468)==4);
+    unsigned selector=mounted?0x16:0x4A;
+    unsigned pointer=prg(0x29,0xB800+selector)|(unsigned)prg(0x29,0xB860+selector)<<8;
+    if(pointer<0xA000 || pointer>=0xC000)return -1;
+    unsigned cursor=prg(0x29,pointer)<128?8:1;
+    for(unsigned n=0;n<32;n++,cursor+=4) {
+        if(pointer+cursor+3>=0xC000)break;
+        unsigned bank=prg(0x29,pointer+cursor);if(bank>=128)break;
+        unsigned tiles=prg(0x29,pointer+cursor+1),from=prg(0x29,pointer+cursor+2),to=prg(0x29,pointer+cursor+3);
+        size_t source=(size_t)bank*8192+(from-0x80u)*256u,start=to*256u,count=tiles*16u;
+        if(from>=0x80 && from<0xC0 && source+count<=s_cart_size && address>=start && address-start<count)
+            return s_cart[source+address-start];
+    }
+    return -1;
+}
 int mm4_controls_pattern(int weapon,unsigned address) {
     if(weapon<0 || weapon>13 || !s_cart)return cyc_render_chr((uint16_t)address);
+    if(weapon==3){int value=marine_pattern(address);if(value>=0)return value;}
     unsigned selector=0x30u+(unsigned)weapon;
     unsigned pointer=prg(0x28,0xb800+selector)|(unsigned)prg(0x28,0xb870+selector)<<8;
     if(pointer<0xa000 || pointer>=0xc000)return cyc_render_chr((uint16_t)address);
@@ -259,7 +278,16 @@ static int valid(const uint8_t *in,int len) {
     return 1;
 }
 static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(s_players,in,sizeof s_players);else memset(s_players,0,sizeof s_players);return 1;}
-static void reset(void) {if(mm4_net_locked())return;mm4_coop_wait_set(0);timing(0);enabled(0);s_coop=0;mm4_coop_set(0,s_roster);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);s_wide=0;mm4_wide_set(0,s_aspect);mm4_no_flicker_set(0);}
+static void reset(void) {
+    if(mm4_net_locked())return;
+    /* Activation follows this reset synchronously. Retain live co-op and
+     * waiting bodies when the committed selection still includes co-op. */
+    if(!nes_mod_feature_selected("mega-man-4-usa.coop","coop")) {
+        mm4_coop_wait_set(0);s_coop=0;mm4_coop_set(0,s_roster);
+    }
+    timing(0);enabled(0);s_proto_on=0;mm4_proto_set(0,s_proto_mode,s_proto_start);
+    s_wide=0;mm4_wide_set(0,s_aspect);mm4_no_flicker_set(0);
+}
 static void activate(void) {if(!mm4_net_locked())enabled(1);}
 static void activate_wide(void) {
     if(mm4_net_locked())return;

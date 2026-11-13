@@ -8,7 +8,7 @@ from pathlib import Path
 import argparse,json,os,subprocess,sys,shutil,wave,hashlib
 p=argparse.ArgumentParser()
 for key in ['exe','rom','root']:p.add_argument('--'+key,required=True)
-p.add_argument('--helper',choices=['coil','jet'],default='coil')
+p.add_argument('--helper',choices=['coil','jet','marine'],default='coil')
 p.add_argument('--qualify',action='store_true');a=p.parse_args()
 r=Path(__file__).parent;q=Path(a.root);q.mkdir(parents=True,exist_ok=True)
 sys.path.insert(0,str(r));import qa_route
@@ -20,6 +20,9 @@ def record():
 def run(name,end,lines,load=None,pokes=(),interp=False,saves=()):
  d=q/name;d.mkdir(exist_ok=True);route=d/'input.txt';route.write_text('\n'.join(sorted(lines,key=lambda s:int(s.split()[0])))+'\n')
  argv=[a.exe,a.rom,'--no-save','--config',str(d/'config.ini'),'--mods-root',str(q/'mods'),'--frames',str(end),'--input',str(route),'--coop','on','--weapon-cycle','on','--wide','on','--aspect','fit','--no-flicker','on','--slowdown-reduction','on','--present-size','1280x720','--mm4-controls-log',str(d/'frames.jsonl'),'--hash-out',str(d/'frames.hash'),'--present-out',str(d/'present.png'),'--wav-out',str(d/'audio.wav'),'--save-state',f'{end-1}:{d}/end.cycstate']
+ if a.helper=='marine':
+  argv+=['--screenshot',str(d/'native.png')]
+  if not load:argv+=['--mm4-qa-entry','6,0,0,0,0,0']
  if load:argv+=['--load-state',str(load)]
  if interp:argv+=['--interp-only']
  for f in saves:argv+=['--save-state',f'{f}:{d}/at{f}.cycstate']
@@ -34,6 +37,38 @@ def run(name,end,lines,load=None,pokes=(),interp=False,saves=()):
 boot=q/'boot/end.cycstate'
 if not boot.is_file():
  _,lines=qa_route.expand(r.parent/'tests/routes/coop-gallery.route');run('boot',2501,[x for x in lines if int(x.split()[0])<=2200])
+if a.helper=='marine':
+ for owner in [0,1]:
+  other=owner^1;tag=f'marine-owner{owner}'
+  setup={0x300:1,0xB0:0x9C,0x3C:127,0xA0:0,0x330:200,0x348:0,0x378:160,0x390:0,0x30:0,0x3D8:0,0x3F0:0,0x3E:160,0x3F:0,0x301:0,0x302:0,0x303:0,0x304:0}
+  pokes=[(2501,s,z,v)for s in [0,1]for z,v in setup.items()]
+  pokes +=[(2501,owner,0xB1,0),(2501,owner,0xB2,0),(2501,owner,0xB3,0x9C),(2501,other,0xB3,0x8D),(2501,other,0x330,64),(2501,other,0x378,80)]
+  lines=['2501 HOLD 0305-0317 00',f'2503 X{owner+1}:R',f'2509 X{owner+1}:-',f'2512 {owner+1}:B',f'2513 {owner+1}:-']
+  d,v,b=run(tag+'-summon',2581,lines,boot,pokes)
+  h=b[owner]['helper'];x=h[2]+256*h[3];y=h[5]
+  checks[tag+'-native-summon']=b[owner]['weapon']==3 and (h[0]==4 or b[owner]['state']==4) and not v['coop']['failed'];record()
+  if not checks[tag+'-native-summon']:sys.exit(1)
+  pokes=[] if b[owner]['state']==4 else [(2581,owner,z,val)for z,val in [(0x330,x&255),(0x348,x>>8),(0x378,y),(0x390,0),(0x30,0),(0x3E,y),(0x3F,0)]]
+  pokes +=[(2581,s,0x3C,0)for s in [0,1]]
+  board,v,b=run(tag+'-board',2661,['2581 HOLD 0305-0317 00','2581 1:-','2581 2:-'],d/'end.cycstate',pokes,saves=(2659,))
+  checks[tag+'-actual-native-boarding']=b[owner]['state']==4 and b[owner]['ammo'][2]>0 and not v['coop']['failed'];record()
+  # Keep moving inside the water, avoiding the shared-screen edge clamp.
+  lines=['2661 HOLD 0305-0317 00']+[f'{f} {owner+1}:'+('LEFT'if ((f-2661)//12)%2==0 else 'RIGHT')for f in range(2661,2860,12)]+[f'2860 {owner+1}:-']
+  pokes=[(2661,owner,0xB3,0x81),(2661,other,0xB3,0x8D)];cut=2676
+  n,v,b=run(tag+'-deplete',2861,lines,board/'end.cycstate',pokes,saves=(cut,)if a.qualify else ())
+  checks[tag+'-native-depletion-and-dismount']=b[owner]['ammo'][2]==0 and b[owner]['state']<4 and not v['coop']['failed']
+  checks[tag+'-other-fuel-retained']=b[other]['ammo'][2]==13
+  checks[tag+'-alive-no-life-cost']=v['coop']['dead']==[0,0] and v['coop']['lives']==2 and all(personal(n/'end.cycstate',s,0xB0)&31==28 for s in [0,1]);record()
+  if a.qualify:
+   i,_,_=run(tag+'-deplete-interp',2861,lines,board/'end.cycstate',pokes,True,(cut,))
+   c,_,_=run(tag+'-deplete-cold',2861,lines,n/f'at{cut}.cycstate')
+   checks[tag+'-backend-exact']=all((n/f).read_bytes()==(i/f).read_bytes()for f in ['frames.hash','end.cycstate','audio.wav','present.png'])
+   full=qa_route.load_hashes(n/'frames.hash');tail=qa_route.load_hashes(c/'frames.hash')
+   checks[tag+'-cold-hash']=len(tail)==2860-cut and tail=={f:h for f,h in full.items()if f>cut}
+   checks[tag+'-cold-first-picture-state']=all((n/f).read_bytes()==(c/f).read_bytes()for f in ['end.cycstate','present.png',f'present_{cut+1:05d}.png'])
+   with wave.open(str(n/'audio.wav'))as x,wave.open(str(c/'audio.wav'))as y:pcm=x.readframes(x.getnframes());cold=y.readframes(y.getnframes())
+   checks[tag+'-cold-pcm']=bool(cold)and pcm.endswith(cold);record()
+ sys.exit(not all(checks.values()))
 weapon=1 if a.helper=='coil' else 2
 end=2621 if weapon==1 else 2661
 cut=end-26
