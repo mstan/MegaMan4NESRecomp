@@ -31,6 +31,7 @@ static unsigned s_extra_lines;
 static uint8_t *s_cart;
 static size_t s_cart_size;
 static FILE *s_log;
+static char *s_log_path;
 static int s_wide;
 static char s_aspect[16]="fit";
 static unsigned s_qa_entry[6];
@@ -261,7 +262,16 @@ static bool option(void *ctx,const char *name,const char *value) {
         if(strcmp(value,"fit") && strcmp(value,"stock") && strcmp(value,"16-9") && strcmp(value,"21-9") && strcmp(value,"32-9"))return false;
         snprintf(s_aspect,sizeof s_aspect,"%s",value);mm4_wide_set(s_wide,s_aspect);return true;
     }
-    if(!strcmp(name,"--mm4-controls-log")){s_log=fopen(value,"w");return s_log!=NULL;}
+    if(!strcmp(name,"--mm4-controls-log")) {
+        /* Session restart/catalog replay repeats the same option. Keep its
+         * stream: reopening truncates the file and leaves an older buffered
+         * writer able to overwrite the new round when the process exits. */
+        if(s_log && s_log_path && !strcmp(s_log_path,value))return true;
+        char *path=malloc(strlen(value)+1);if(!path)return false;
+        FILE *next=fopen(value,"w");if(!next){free(path);return false;}
+        strcpy(path,value);if(s_log)fclose(s_log);free(s_log_path);
+        s_log=next;s_log_path=path;return true;
+    }
     if(!strcmp(name,"--protoman")) {
         if(strcmp(value,"on") && strcmp(value,"off"))return false;
         s_proto_on=!strcmp(value,"on");return mm4_proto_set(s_proto_on || s_coop,s_proto_mode,s_proto_start);
