@@ -32,8 +32,8 @@ def pcm(p):
  with wave.open(str(p),'rb') as w:return w.readframes(w.getnframes())
 cold=pcm(c/'audio.wav');checks['cold-PCM']=bool(cold) and pcm(n/'audio.wav').endswith(cold)
 checks['instant-first-current-picture']=(o/'instant/scene.png').read_bytes()==(n/'scene_04000.png').read_bytes()
-for f in (2700,2800,2900,3000):
+for f in (2400,2500,2700,2800,2900,3000):
  im=Image.open(n/f'scene_{f:05}.png').convert('RGB');hp=[p[2] for p in rows[f]['coop']['players']];counts=[sum(any(rgb) for rgb in im.crop((8,20+seat*76,16,76+seat*76)).getdata()) for seat in range(2)];observed[str(f)]=dict(hp=hp,HUD_colored_pixels=counts)
- checks[f'actual-blackout-personal-meter-{f}']=all(counts[seat]==hp[seat]*6 for seat in range(2) if hp[seat]>0 and not rows[f]['coop']['dead'][seat])
-result=dict(passed=all(checks.values()),checks=checks,observed=observed,exe_sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),scope='Original Bright reset route plus both actual move/jump/fire inputs through genuine blackout, native spike death and survivor camera handoff. Native/I, current cold/instant/state/PCM, and visible personal meters in four native blackout pictures. No completion flags or synthetic fade/HUD result flags.')
+ checks[f'native-personal-meter-{f}']=all(counts[seat]==hp[seat]*6 for seat in range(2) if hp[seat]>0 and not rows[f]['coop']['dead'][seat])
+result=dict(passed=all(checks.values()),checks=checks,observed=observed,exe_sha256=hashlib.sha256(exe.read_bytes()).hexdigest(),scope='Original Bright reset route plus both actual move/jump/fire inputs through arrival, genuine blackout, native spike death and survivor camera handoff. Native/I, current cold/instant/state/PCM, and exact personal HP fill during arrival and four native blackout pictures. No completion flags or synthetic fade/HUD result flags.')
 (o/'summary.json').write_text(json.dumps(result,indent=2));print(json.dumps(result),flush=True);assert result['passed'],checks

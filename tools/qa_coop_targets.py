@@ -15,11 +15,11 @@ def memory(path):
         at+=8+n
     raise AssertionError('missing native RAM')
 
-addresses=[base+slot for base in range(0x300,0x5B9,24) for slot in range(5)]+list(range(0x30,0x40))+[0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0xA0,0xAD]+list(range(0xB0,0xBE))+[a+i for i in range(8) for a in [0x610,0x630]]+[0x131,0x138,0x133,0x134]
+addresses=[base+slot for base in range(0x300,0x5B9,24) for slot in range(5)]+list(range(0x30,0x40))+[0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0xA0,0xAD]+list(range(0xB0,0xBE))+[a+i for i in range(4) for a in [0x610,0x630]]+[0x131,0x138,0x133,0x134]
 index={a:i for i,a in enumerate(addresses)}
 
 def personal(path,seat,address):
-    b=Path(path).read_bytes();at=max(b.find(b'M4CB'),b.find(b'M4CC'),b.find(b'M4CD'),b.find(b'M4CE'),b.find(b'M4CF'),b.find(b'M4D0'),b.find(b'M4D1'));assert at>=0
+    b=Path(path).read_bytes();at=b.find(b'M4D2');assert at>=0
     if b[at+8]==seat:return memory(path)[address]
     return b[at+20+seat*386+index[address]]
 
@@ -83,7 +83,7 @@ def main():
         if v.return_state and not v.only_final:cases += [('return',Path(v.return_state),4410,4800,9,s) for s in [0,1]]
         if v.final_state and not v.only_final:
             assert v.return_state and memory(v.final_state)[0xAC]==255,'prior completed refights must have legitimate source evidence'
-            b=Path(v.return_state).read_bytes();cp=max(b.find(b'M4CB'),b.find(b'M4CC'),b.find(b'M4CD'),b.find(b'M4CE'),b.find(b'M4CF'),b.find(b'M4D0'),b.find(b'M4D1'));assert cp>=0 and all(not b[cp+20+s*386+385] for s in [0,1]),'use the both-living first-kill fixture'
+            b=Path(v.return_state).read_bytes();cp=b.find(b'M4D2');assert cp>=0 and all(not b[cp+20+s*386+385] for s in [0,1]),'use the both-living first-kill fixture'
             cases += [('prior-return',Path(v.return_state),4410,4800,9,0)]
         for kind,source,f,end_frame,destination,seat in cases:
             pokes=[];m=memory(source);camera=m[0xF9]*256+m[0xFC]
@@ -103,7 +103,7 @@ def main():
             if kind=='prior-return':lines.append(f'{f} POKE 00AC FF')
             label=f'{kind}-portal-{seat}';cut=f+(640 if kind=='final' else 14)
             d=run(label,source,lines,end_frame,pokes,saves=[cut]);end=d/'end.cycstate';m=memory(end)
-            b=end.read_bytes();cp=max(b.find(b'M4CB'),b.find(b'M4CC'),b.find(b'M4CD'),b.find(b'M4CE'),b.find(b'M4CF'),b.find(b'M4D0'),b.find(b'M4D1'));wp=b.find(b'M4WT')
+            b=end.read_bytes();cp=b.find(b'M4D2');wp=b.find(b'M4WT')
             checks[label+'-both-native-destination']=m[0x2A]==destination and all(personal(end,s,0x348)==m[0xF9] and personal(end,s,0x30)<8 for s in [0,1])
             checks[label+'-personal-inventory']=all(personal(end,s,0xA0)==s and personal(end,s,0xB0)&31==[20,14][s] and all(personal(end,s,a)==0x80+5+s*5 for a in range(0xB1,0xBE)) for s in [0,1])
             rows=[json.loads(line) for line in (d/'state.jsonl').read_text().splitlines()]

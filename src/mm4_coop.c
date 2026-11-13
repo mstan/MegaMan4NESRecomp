@@ -113,7 +113,9 @@ static void addresses(void) {
     static const uint8_t zp[]={0x40,0x41,0x42,0x43,0x44,0x45,0x46,0x47,0xA0,0xAD};
     for(int i=0;i<sizeof zp;i++)s_addr[s_count++]=zp[i];
     for(int a=0xB0;a<=0xBD;a++)s_addr[s_count++]=(uint16_t)a;
-    for(int i=0;i<8;i++){s_addr[s_count++]=(uint16_t)(0x610+i);s_addr[s_count++]=(uint16_t)(0x630+i);}
+    /* Palette 0 belongs to the player/weapon. Palette 1 is the shared native
+     * HP meter: a seat must not retain its early, still-dark arrival palette. */
+    for(int i=0;i<4;i++){s_addr[s_count++]=(uint16_t)(0x610+i);s_addr[s_count++]=(uint16_t)(0x630+i);}
     s_addr[s_count++]=0x131;s_addr[s_count++]=0x138;
     s_addr[s_count++]=0x133;s_addr[s_count++]=0x134;
     for(int i=0;i<s_count;i++)s_index[s_addr[i]]=(uint16_t)(i+1);
@@ -973,11 +975,11 @@ void mm4_coop_set(int enabled,int roster) {
     nes_mod_set_local_only("MM4 personal co-op (unqualified netplay)",s_on);mm4_view_coop(s_on);
     mm4_coop_view_set(s_view);
 }
-static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4D1",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;C.wait_mode=(uint8_t)s_wait_both;memcpy(out,&C,sizeof C);return sizeof C;}
+static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4D2",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;C.wait_mode=(uint8_t)s_wait_both;memcpy(out,&C,sizeof C);return sizeof C;}
 static int valid(const uint8_t *in,int len) {
     if(!len)return !s_on;if(!in || len!=sizeof C)return 0;
     static Coop p;memcpy(&p,in,sizeof p);
-    if(memcmp(p.magic,"M4D1",4)||p.enabled!=s_on||p.roster!=s_roster||p.wait_mode!=s_wait_both||p.waiting>3||((!p.enabled||!p.wait_mode)&&p.waiting)||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.menu_ready>1||p.menu_busy>1||p.menu_user>1||(!p.menu && (p.menu_ready||p.menu_busy))||p.scene_active>2||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2||p.checkpoint>2||p.revive_pending>3)return 0;
+    if(memcmp(p.magic,"M4D2",4)||p.enabled!=s_on||p.roster!=s_roster||p.wait_mode!=s_wait_both||p.waiting>3||((!p.enabled||!p.wait_mode)&&p.waiting)||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.menu_ready>1||p.menu_busy>1||p.menu_user>1||(!p.menu && (p.menu_ready||p.menu_busy))||p.scene_active>2||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2||p.checkpoint>2||p.revive_pending>3)return 0;
     if(p.source_pending>3 || p.source_page>=48 || p.source_offset>=48 || p.source_nt ||
        (p.source_pending && (p.source_regs.pc!=0xC96E || p.menu || p.scene_active)))return 0;
     if(p.initialized && (p.withdrawn&(1u<<p.anchor)))return 0;

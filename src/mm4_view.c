@@ -77,9 +77,9 @@ static int dma(uint16_t address) {
     int progress=cyc_mod_peek(0x13B),phase=progress-4;
     int rain=progress>=4 && progress<=240 && !(progress&3) && cyc_mod_peek(0x145)<16;
     for(int slot=0;slot<30 && rain;slot++)rain=
-        cyc_mod_peek(0x200+slot*4)==(uint8_t)(mm4_cart_prg(0x3E,0xDFBE+slot*2)+phase) &&
+        cyc_mod_peek(0x200+slot*4)==(uint8_t)(mm4_cart_prg(0x3E,0xDFBE + slot*2)+phase) &&
         cyc_mod_peek(0x201+slot*4)==0x99 && !cyc_mod_peek(0x202+slot*4) &&
-        cyc_mod_peek(0x203+slot*4)==(uint8_t)(mm4_cart_prg(0x3E,0xDFBF+slot*2)-phase);
+        cyc_mod_peek(0x203+slot*4)==(uint8_t)(mm4_cart_prg(0x3E,0xDFBF + slot*2)-phase);
     if(rain) {
         int owner=-1;
         if(mm4_coop_enabled())for(int seat=0;seat<2;seat++)if(mm4_coop_read(seat,0xA0)==4){owner=seat;break;}
