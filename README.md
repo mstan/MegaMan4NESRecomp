@@ -15,7 +15,7 @@ Use `NESRECOMP_ROOT` and `NESRECOMP_RECOMP_UI` to select existing engine and lau
 
 ## Quick weapon switching
 
-The default-on package maps L/R (LB/RB) to the previous/next acquired weapon or helper. Selection wraps, skips locked equipment and includes empty weapons. Each press changes once; simultaneous shoulders cancel. Weapon changes clear the previous weapon's personal actors and charge, use native cartridge graphics and palettes, and preserve HP and ammunition. Start opens the native inventory. Both stick clicks open the system menu, with customized bindings retained.
+The default-on package maps L/R (LB/RB) to the previous/next acquired weapon or helper. Selection wraps, skips locked equipment and includes empty weapons. Each press changes once; simultaneous shoulders cancel. Weapon changes clear the previous weapon's personal actors and charge, use native cartridge graphics and palettes, and preserve HP and ammunition. Switching out of Rush Marine returns to native foot controls and artwork, as native inventory selection does. Start opens the native inventory. Both stick clicks open the system menu, with customized bindings retained.
 
 The original slide and charged Mega Buster use their native mechanics. The project validates the USA cartridge payload before generation and keeps generated code in the build directory.
 
@@ -74,7 +74,7 @@ Marine boarding and fuel stay personal. Each controller runs the original native
 python tools/qa_coop_helpers.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --root qa/marine --helper marine --qualify
 ```
 
-This bounded check uses native summon/boarding input, then one remaining fuel unit and movement inside the water. Both ownership directions must exhaust their own fuel, dismount alive and retain the other player's fuel. Native/interpreter state, pictures and audio agree, including current-build first-picture/PCM continuation near depletion.
+This bounded check uses native summon/boarding input, L/R dismount and returned Buster fire, then a separate one-unit fuel depletion while moving inside the water. Both ownership directions must dismount alive and retain the other player's fuel. Native/interpreter state, pictures and audio agree, including current-build first-picture/PCM continuation after switching and near depletion. Concurrent-form checks also cover one player returning to foot controls and firing while the other keeps piloting, with independent native body artwork and fuel clocks.
 
 Changing a presentation option in Mods retains live co-op bodies, inventories and pending wait-for-both positions when co-op remains selected. The catalog's synchronous reset/activation pass does not create a new team.
 

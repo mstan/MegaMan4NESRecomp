@@ -116,7 +116,7 @@ static int safe_for_seat(int seat) {
 }
 static int safe(void) {return safe_for_seat(mm4_coop_seat());}
 int mm4_controls_art(int weapon) {return weapon>=0 && weapon<=13 && graphics(weapon,0) && graphics(weapon,1);}
-static int marine_pattern(unsigned address) {
+static int body_pattern(unsigned address) {
     /* Native boarding streams16; dismount streams4A. These common body
      * patterns are separate from weapon33's projectile/helper packets. */
     int mounted=ram(0x30)==4 || (ram(0x30)==6 && ram(0x468)==4);
@@ -136,7 +136,7 @@ static int marine_pattern(unsigned address) {
 }
 int mm4_controls_pattern(int weapon,unsigned address) {
     if(weapon<0 || weapon>13 || !s_cart)return cyc_render_chr((uint16_t)address);
-    if(weapon==3){int value=marine_pattern(address);if(value>=0)return value;}
+    {int value=body_pattern(address);if(value>=0)return value;}
     unsigned selector=0x30u+(unsigned)weapon;
     unsigned pointer=prg(0x28,0xb800+selector)|(unsigned)prg(0x28,0xb870+selector)<<8;
     if(pointer<0xa000 || pointer>=0xc000)return cyc_render_chr((uint16_t)address);
@@ -153,7 +153,16 @@ int mm4_controls_pattern(int weapon,unsigned address) {
 }
 int mm4_controls_equip(int next) {
     if(!s_cart || next<0 || next>13 || (next && !(ram(0xB0+next)&128)) || !graphics(next,0) || !graphics(next,1))return 0;
+    int mounted=ram(0x30)==4 && ram(0xA0)==3;
     poke(0xa0,next);poke(0x131,next?(0x80|next):0);
+    if(mounted) {
+        /* Native menu selection clears Marine state at973A. L/R must leave
+         * the same on-foot controller and common body graphics behind. */
+        poke(0x30,0);
+        if(!cyc_mod_isolated())for(unsigned a=0x1100;a<0x1300;a++) {
+            int value=body_pattern(a);if(value<0 || !cyc_mod_chr_poke((uint16_t)a,(uint8_t)value))return 0;
+        }
+    }
     poke(0x35,0);poke(0x36,0);poke(0x4c8,0);
     /* Same personal object cleanup as native menu exit DC00 (slots 1..4). */
     for(int slot=1;slot<=4;slot++) {

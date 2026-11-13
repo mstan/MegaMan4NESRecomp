@@ -52,6 +52,21 @@ if a.helper=='marine':
   pokes +=[(2581,s,0x3C,0)for s in [0,1]]
   board,v,b=run(tag+'-board',2661,['2581 HOLD 0305-0317 00','2581 1:-','2581 2:-'],d/'end.cycstate',pokes,saves=(2659,))
   checks[tag+'-actual-native-boarding']=b[owner]['state']==4 and b[owner]['ammo'][2]>0 and not v['coop']['failed'];record()
+  # L/R must perform the same Marine-to-foot state change as native menu
+  # selection, without charging fuel or leaving the Marine controller active.
+  lines=['2661 HOLD 0305-0317 00',f'2661 X{owner+1}:L',f'2662 X{owner+1}:-',f'2670 {owner+1}:B',f'2671 {owner+1}:-']
+  n,v,b=run(tag+'-switch-out',2721,lines,board/'end.cycstate',saves=(2668,2670))
+  checks[tag+'-LR-native-onfoot-buster']=b[owner]['weapon']==0 and b[owner]['state']==0 and b[owner]['ammo'][2]==(personal(board/'end.cycstate',owner,0xB3)&31) and not v['coop']['failed']
+  checks[tag+'-LR-returned-native-shot']=personal(n/'at2670.cycstate',owner,0x301)==2
+  checks[tag+'-LR-kept-personal-health']=all(personal(n/'end.cycstate',s,0xB0)&31==28 for s in [0,1]);record()
+  if a.qualify:
+   i,_,_=run(tag+'-switch-interp',2721,lines,board/'end.cycstate',interp=True,saves=(2668,2670))
+   c,_,_=run(tag+'-switch-cold',2721,lines,n/'at2668.cycstate')
+   checks[tag+'-switch-backend-exact']=all((n/f).read_bytes()==(i/f).read_bytes()for f in ['frames.hash','end.cycstate','audio.wav','present.png'])
+   full=qa_route.load_hashes(n/'frames.hash');tail=qa_route.load_hashes(c/'frames.hash');checks[tag+'-switch-cold-hash']=len(tail)==52 and tail=={f:h for f,h in full.items()if f>2668}
+   checks[tag+'-switch-cold-first-picture-state']=all((n/f).read_bytes()==(c/f).read_bytes()for f in ['end.cycstate','present.png','present_02669.png'])
+   with wave.open(str(n/'audio.wav'))as x,wave.open(str(c/'audio.wav'))as y:pcm=x.readframes(x.getnframes());cold=y.readframes(y.getnframes())
+   checks[tag+'-switch-cold-pcm']=bool(cold)and pcm.endswith(cold);record()
   # Keep moving inside the water, avoiding the shared-screen edge clamp.
   lines=['2661 HOLD 0305-0317 00']+[f'{f} {owner+1}:'+('LEFT'if ((f-2661)//12)%2==0 else 'RIGHT')for f in range(2661,2860,12)]+[f'2860 {owner+1}:-']
   pokes=[(2661,owner,0xB3,0x81),(2661,other,0xB3,0x8D)];cut=2676
