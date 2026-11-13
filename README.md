@@ -132,6 +132,8 @@ Personal button edges advance when that player's native controller runs. A new h
 
 An individual death keeps the partner in control without spending a life. Both the native collision and render-time pit paths retain their native death handling; the living partner keeps stage music. Personal countdowns execute the original timer routine. Once both players are down, one original shared retry spends a life and revives both at full health, with Buster selected and each player's own ammo retained. Either controller can operate global screens; each personal inventory keeps its owner's input.
 
+After Game Over, the password/continue screen uses its centered native PPU picture in solo and co-op. It does not inherit gameplay terrain or the previous camera. Continue and stage selection reinitialize both co-op players at full health with Buster and their own remaining ammo. Original boss rewards and stage-entry refills apply to both players.
+
 When the survivor reaches a new native checkpoint, a fallen partner returns at full health with Buster selected and their remaining ammo intact. Recovery waits for checked standing room and uses the native entry beam. It spends no life and preserves the survivor's health. A player who deliberately withdrew continues to use Select to return.
 
 ```text

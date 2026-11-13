@@ -67,6 +67,9 @@ static HookSetting s_hooks[128];
 static int s_hook_count;
 
 int mm4_coop_enabled(void) { return s_on; }
+/* Password/continue reuses a stage number after the native death countdown.
+ * Co-op releases its bodies; solo has no personal contexts to release. */
+int mm4_coop_global_screen(void) {return R(0x30)==7 && !(R(0x133)|R(0x134)) && (!s_on || (!C.initialized && !C.menu));}
 int mm4_coop_seat(void) { return s_on?C.current:0; }
 int mm4_coop_character(void) { return s_on?(s_roster^C.current):-1; }
 int mm4_coop_character_at(int seat) {return s_on && seat>=0 && seat<2?(s_roster^seat):0;}

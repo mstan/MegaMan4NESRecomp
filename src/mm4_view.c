@@ -248,6 +248,7 @@ static int panels(uint32_t *out,int width,int height) {
     cyc_render_set_native_origin(0);return 1;
 }
 static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *native, void *ctx) {
+    if(mm4_coop_global_screen())return 0;
     (void)ctx; (void)native_x0;
     sprite_limits(cyc_render_oam());
     if(cyc_mod_peek(0x22)==16){

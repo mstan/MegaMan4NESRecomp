@@ -2,6 +2,7 @@
 #include "mm4_proto.h"
 #include <stdint.h>
 int mm4_coop_enabled(void);
+int mm4_coop_global_screen(void);
 int mm4_coop_seat(void);
 int mm4_coop_character(void);
 int mm4_coop_character_at(int seat);
