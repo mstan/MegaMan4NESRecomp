@@ -41,7 +41,9 @@ static void seen_stage(void) {
 
 static int room_geometry(int width, int *camera, int *left, int *lo, int *hi) {
     int independent=mm4_coop_independent();
-    if ((!s_on && !independent) || (!independent && width <= 256) || width > CYC_VIDEO_MAX_WIDTH || R(0x22) >= 16 || R(0x19) || R(0x1A) ||
+    /* $19/$1A queue the native VRAM streams consumed at C330/C334. They
+     * pulse during ordinary scrolling and do not invalidate room geometry. */
+    if ((!s_on && !independent) || (!independent && width <= 256) || width > CYC_VIDEO_MAX_WIDTH || R(0x22) >= 16 ||
         (R(0x2B)&0xC0) || R(0x30)==10) return 0;
     int page = R(0xF9), start = page - R(0x2E);
     if (start < 0 || R(0x2D) > 15) return 0;

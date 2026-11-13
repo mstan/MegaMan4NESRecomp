@@ -78,7 +78,10 @@ int mm4_coop_wait_both(void) {return s_wait_both;}
 void mm4_coop_wait_set(int both) {s_wait_both=both!=0;if(!s_wait_both)finish_wait();}
 int mm4_coop_view_mode(void) {return s_on?s_view:0;}
 int mm4_coop_independent(void) {return s_on && s_view!=0;}
-int mm4_coop_scene_locked(void) {return C.source_pending || C.scene_active || R(0x19) || R(0x1A) || R(0x30)>=8;}
+int mm4_coop_native_scene(void) {return C.source_pending || C.scene_active || R(0x30)>=8;}
+/* Native transactions may wait for a queued VRAM upload. Presentation keeps
+ * its room/cameras while that ordinary scrolling work is pending. */
+int mm4_coop_scene_locked(void) {return mm4_coop_native_scene() || R(0x19) || R(0x1A);}
 int mm4_coop_source_pending(void) {return C.source_pending;}
 void mm4_coop_view_set(int mode) {
     if(mode<0 || mode>3)return;
@@ -90,7 +93,7 @@ int mm4_coop_view_rects(int left[2]) {
     int camera=(R(0xF9)<<8)|R(0xFC),start=R(0xF9)-R(0x2E);
     for(int seat=0;seat<2;seat++) {
         int who=(C.player[seat].dead || (C.withdrawn&(1u<<seat)))?C.anchor:seat;left[seat]=camera;
-        if(!mm4_coop_scene_locked() && !(R(0x2B)&0xC0) && start>=0) {
+        if(!mm4_coop_native_scene() && !(R(0x2B)&0xC0) && start>=0) {
             int x=(mm4_coop_read(who,0x348)<<8)|mm4_coop_read(who,0x330);
             int lo=start*256,hi=(start+R(0x2D))*256;
             left[seat]=x-128;if(left[seat]<lo)left[seat]=lo;if(left[seat]>hi)left[seat]=hi;

@@ -25,6 +25,7 @@ for name in ('native','interpreter','cold','instant'):
 n=o/'native';i=o/'interpreter';c=o/'cold';rows={x['frame']:x for x in map(json.loads,(n/'frames.jsonl').read_text().splitlines())}
 checks['room-retained-through-native-spike-death']=rows[7001]['wide']['width']==426 and rows[7001]['wide']['room_valid']==1 and rows[7001]['wide']['parts']==0
 checks['no-native-call-failures']=all(x['wide']['failed']==x['coop']['failed']==0 for x in rows.values())
+checks['continuous-walking-blackout-room-geometry']=all(rows[f]['wide']['room_valid']==1 and rows[f]['wide']['width']==426 for f in range(2400,3101))
 for f in ('hash.txt','scene.png','end.cycstate','middle.cycstate','audio.wav','ram.frames'):checks['Native-I-'+f]=(n/f).read_bytes()==(i/f).read_bytes()
 for f in ('scene.png','end.cycstate'):checks['cold-'+f]=(n/f).read_bytes()==(c/f).read_bytes()
 checks['cold-hash']=[s for s in(n/'hash.txt').read_text().splitlines() if s[:1].isdigit() and int(s.split()[0])>4000]==(c/'hash.txt').read_text().splitlines()

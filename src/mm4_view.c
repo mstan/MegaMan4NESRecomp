@@ -30,7 +30,7 @@ static void panels_build(void) {
     if(!mm4_coop_independent() || cyc_mod_peek(0x22)>=16)return;
     int left[2];if(!mm4_coop_view_rects(left))return;
     s_build.panels=1;
-    s_build.native_scene=(uint8_t)(mm4_coop_scene_locked() || (cyc_mod_peek(0x2B)&0xC0) || (cyc_mod_peek(0x132)&128));
+    s_build.native_scene=(uint8_t)(mm4_coop_native_scene() || (cyc_mod_peek(0x2B)&0xC0) || (cyc_mod_peek(0x132)&128));
     int lo=(cyc_mod_peek(0xF9)-cyc_mod_peek(0x2E))*256,hi=lo+(cyc_mod_peek(0x2D)+1)*256;
     for(int seat=0;seat<2;seat++) {
         s_build.left[seat]=(int16_t)left[seat];
@@ -268,7 +268,7 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
         if(!mm4_coop_source_pending())mm4_world_audit(s_bg);
         if(panels(out,W,H))return 1;
     }
-    if (cyc_mod_peek(0x22) >= 16 || cyc_mod_peek(0x19) || cyc_mod_peek(0x1A)) return 0;
+    if (cyc_mod_peek(0x22) >= 16) return 0;
     if (!(s_enabled || s_wide || s_coop || s_no_flicker) || W < 256 || W > 864 || H != 240 || !cyc_render_background(s_bg)) return 0;
     int origin = (W - 256) / 2;
     int replace = s_enabled && s_frame.valid && s_frame.body.active;
