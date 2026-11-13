@@ -33,6 +33,18 @@ For fresh-boot QA, `--mm4-qa-entry stage,page,room,art,palette,checkpoint` suppl
 
 No sprite flicker is enabled by default and works independently of widescreen. It draws complete native actors in stable priority beyond the original scanline and OAM display limits. Intentional animation hiding, the native PPU sprite-enable flag and native-width left-edge masking remain intact. Co-op renders each personal actor separately so a busy helper cannot truncate later weapon artwork. Use `--no-flicker on|off` for development comparisons.
 
+Wider rooms retain their geometry while player sprites are hidden. Authored
+edge columns replace the hardware's masked and unfinished viewport columns.
+Personal meters follow native HUD visibility and keep their screen positions
+through Bright's blackout and recovery. Native OAM writes cannot inherit stale
+actor ownership. Targeted checks cover the native blackout, spike death and
+survivor handoff, both CPU backends and current-build picture/state/audio replay.
+Fresh profiles enable VSync; existing saved choices remain in effect.
+
+`tools/qa_presentation.py` exercises that native route with both controllers.
+`tools/make_release.ps1` builds the ROM-free Windows package using the pinned
+engine packager and its library/font notices.
+
 ```text
 python -m pip install Pillow
 python tools/qa_noflicker.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/noflicker

@@ -942,7 +942,7 @@ void mm4_coop_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
             if(!value || px<0 || px>=width || py<0 || py>=240)continue;
             if(!p->owner && C.frame.body.active && !mm4_view_native_body_pixel(&C.frame.body,origin,px,py))continue;
             unsigned mask=cyc_render_line_mask(py);
-            if(!(mask&16) || (!mm4_coop_independent() && px>=origin && px<origin+8 && !(mask&4)))continue;
+            if(!(mask&16) || (width<=256 && !mm4_coop_independent() && px>=origin && px<origin+8 && !(mask&4)))continue;
             int at=py*width+px;if(claimed[at])continue;claimed[at]=1;
             if(!(p->attr&32)||!opaque[at])out[at]=cyc_render_color_value(p->colors[value]);
         }

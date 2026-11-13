@@ -70,6 +70,12 @@ length = 8
 crc32 = 0x0184F5FB
 
 [[mod_function_hook]]
+id = "mm4.hud.native"
+addr = 0xDF00
+length = 8
+crc32 = 0x85E33825
+
+[[mod_function_hook]]
 id = "mm4.proto.shield"
 addr = 0x81CC
 length = 8

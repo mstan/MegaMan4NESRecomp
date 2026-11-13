@@ -4,6 +4,7 @@
 #include "cyc_mod.h"
 #include "cyc_render.h"
 #include "mod_savestate.h"
+#include "mod_function_hooks.h"
 #include <string.h>
 #define R(a) cyc_mod_peek((uint16_t)(a))
 #define P(a,v) cyc_mod_poke((uint16_t)(a),(uint8_t)(v))
@@ -22,7 +23,7 @@ static int meter(uint8_t *out,int which) {
         if(top<25 || top>73)return 0;
         for(int y=0;y<8;y++) {
             int row=(attr&128)?7-y:y,a=cyc_render_line_sprite_table(top)+tile*16+row;
-            int low=mm4_controls_pattern(0,(unsigned)a),high=mm4_controls_pattern(0,(unsigned)(a+8));
+            int low=cyc_render_chr((uint16_t)a),high=cyc_render_chr((uint16_t)(a+8));
             for(int x=0;x<8;x++) {
                 int bit=(attr&64)?x:7-x,v=((low>>bit)&1)|(((high>>bit)&1)<<1);
                 out[(top-25+y)*8+x]=(uint8_t)(v?((attr&3)*4+v):0);
@@ -32,9 +33,10 @@ static int meter(uint8_t *out,int which) {
     return 1;
 }
 void mm4_hud_reset(void) {memset(&B,0,sizeof B);memset(&F,0,sizeof F);}
+void mm4_hud_begin(void) {memset(&B,0,sizeof B);}
 int mm4_hud_capture(void) {
     memset(&B,0,sizeof B);
-    if(!mm4_coop_enabled() || cyc_mod_isolated() || R(0x22)>=16)return 1;
+    if(!mm4_coop_enabled() || cyc_mod_isolated() || R(0x22)>=16 || !(R(0x130)&128))return 1;
     Hud next={0};int actor=R(0x146),boss=(R(0x132)&128) && actor>=5 && actor<24 && R(0x450+actor);
     for(int seat=0;seat<2;seat++) {
         uint8_t inventory[14];for(int i=0;i<14;i++)inventory[i]=(uint8_t)mm4_coop_read(seat,(uint16_t)(0xB0+i));
@@ -56,7 +58,7 @@ int mm4_hud_capture(void) {
 }
 void mm4_hud_latch(void) {F=B;}
 int mm4_hud_native_meter(const uint8_t *o) {
-    return mm4_coop_enabled() && F.valid && o && o[0]>=24 && o[0]<=72 && !(o[0]&7) && o[1]>=0x80 && o[1]<=0x84 &&
+    return mm4_coop_enabled() && o && o[0]>=24 && o[0]<=72 && !(o[0]&7) && o[1]>=0x80 && o[1]<=0x84 &&
         ((o[3]==24 && o[2]==1) || (o[3]==16 && o[2]==0) || (o[3]==40 && o[2]==2));
 }
 static void draw(uint32_t *out,int width,int height,int left,int top,const uint8_t *pixels,const uint8_t *palette,int tint) {
@@ -88,4 +90,10 @@ static int valid(const uint8_t *in,int len) {
     return 1;
 }
 static int set(const uint8_t *in,int len){if(!valid(in,len))return 0;if(len){memcpy(&B,in,sizeof B);memcpy(&F,in+sizeof B,sizeof F);}else mm4_hud_reset();return 1;}
-void mm4_hud_register(void){nes_mod_register_savestate_hook("mm4.hud",get,set);nes_mod_register_savestate_validator("mm4.hud",valid);}
+static int native_meters(uint16_t address) {
+    (void)address;if(cyc_mod_isolated())return 0;
+    CycModRegs r;cyc_mod_regs(&r);
+    if(!r.x)mm4_hud_capture();
+    return 0;
+}
+void mm4_hud_register(void){nes_mod_register_function_entry_plugin("mm4.hud.native",0xDF00,native_meters);nes_mod_register_savestate_hook("mm4.hud",get,set);nes_mod_register_savestate_validator("mm4.hud",valid);}

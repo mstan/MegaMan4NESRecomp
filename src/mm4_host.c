@@ -209,7 +209,7 @@ static void power(void *ctx) {
 }
 static void frame_end(void *ctx) {
     (void)ctx;mm4_proto_end();mm4_coop_end();
-    char fields[512],wide[256],coop[1024],timing_fields[64];
+    char fields[512],wide[384],coop[1024],timing_fields[64];
     snprintf(timing_fields,sizeof timing_fields,"\"timing\":{\"extra_lines\":%u}",cyc_extra_scanlines());mm4_proto_json(fields,sizeof fields);mm4_wide_json(wide,sizeof wide);mm4_coop_json(coop,sizeof coop);
     if(s_log)fprintf(s_log,"{\"frame\":%u,\"weapon\":%u,\"held\":%u,\"changes\":%llu,\"hp\":%u,\"state\":%u,\"stage\":%u,\"charge\":%u,%s,%s,%s,%s}\n",
         cyc_ring_frame,ram(0xa0),S.previous,(unsigned long long)S.changes,ram(0xb0),ram(0x30),ram(0x22),ram(0x35),fields,wide,coop,timing_fields);

@@ -13,7 +13,7 @@
 
 typedef struct {
     char magic[4];
-    uint8_t valid, owners[64];
+    uint8_t valid, owners[64],packets[64][4];
     uint8_t panels,native_scene;
     int16_t left[2];
     uint8_t tiles[2][30][33],palettes[2][30][33],present[2][30][33];
@@ -49,7 +49,7 @@ static int begin(uint16_t address) {
     mm4_wide_begin();
     mm4_coop_build();
     panels_build();
-    mm4_hud_capture();
+    mm4_hud_begin();
     return 0;
 }
 static int part(uint16_t address) {
@@ -58,12 +58,20 @@ static int part(uint16_t address) {
     CycModRegs r; cyc_mod_regs(&r);
     int slot = ((r.x + 252) & 255) / 4, owner = cyc_mod_peek(0x96);
     s_build.owners[slot] = (uint8_t)owner;
+    for(int i=0;i<4;i++)s_build.packets[slot][i]=cyc_mod_peek((uint16_t)(0x200+slot*4+i));
     if (!owner && !s_build.valid) { mm4_proto_body(&s_build.body); s_build.valid = 1; }
     return 0;
 }
 static int dma(uint16_t address) {
     (void)address;
     if(cyc_mod_isolated())return 0;
+    /* Native meters write OAM directly, in alternating draw order. A part
+     * belongs to an actor only while the packet that actor emitted survives. */
+    for(int slot=0;slot<64;slot++)if(s_build.owners[slot]<24) {
+        for(int i=0;i<4;i++)if(s_build.packets[slot][i]!=cyc_mod_peek((uint16_t)(0x200+slot*4+i))) {
+            s_build.owners[slot]=255;break;
+        }
+    }
     /* DF5F overwrites OAM0..29 after actor ownership was captured. Identify
      * its exact native packet, including the final zero-timer frame. */
     int progress=cyc_mod_peek(0x13B),phase=progress-4;
@@ -155,7 +163,7 @@ static void character_body(uint32_t *out, int W, int origin, const Mm4ProtoBody 
             if(px<b->x-8 || px>=b->x+8)continue;
         }
         if (origin + px < 0 || origin + px >= W || py < 0 || py >= 240 ||
-            !(cyc_render_line_mask(py) & 16) || (!s_panel_drawing && px < 8 && !(cyc_render_line_mask(py) & 4)) ||
+            !(cyc_render_line_mask(py) & 16) || (W<=256 && !s_panel_drawing && px < 8 && !(cyc_render_line_mask(py) & 4)) ||
             s_claimed[py * W + origin + px]) continue;
         int at = py * W + origin + px;
         s_claimed[at] = 1;
@@ -183,7 +191,7 @@ static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oa
         for (int x = 0; x < 8; ++x) {
             int px = o[3] + x, bit = (o[2] & 64) ? x : 7 - x;
             int v = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1);
-            if (!v || origin + px < 0 || origin + px >= W || (origin+px>=mask_origin && origin+px<mask_origin+8 && !(cyc_render_line_mask(py) & 4))) continue;
+            if (!v || origin + px < 0 || origin + px >= W || (W<=256 && !s_panel_drawing && origin+px>=mask_origin && origin+px<mask_origin+8 && !(cyc_render_line_mask(py) & 4))) continue;
             if(body && !mm4_view_native_body_pixel(body,origin,origin+px,py))continue;
             int at = py * W + origin + px;
             if (s_claimed[at]) continue;
@@ -274,7 +282,7 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
         }
     }
     const uint8_t *native_opaque = cyc_frame_bg_opaque();
-    for (int y = 0; y < H; ++y) for (int x = 0; x < 256; ++x)
+    if(!wide)for (int y = 0; y < H; ++y) for (int x = 0; x < 256; ++x)
         if (origin+x>=0 && origin+x<W) s_opaque[y*W+origin+x]=native_opaque[y*256+x];
     const uint8_t *oam = cyc_render_oam();
     int first = 64;
@@ -315,6 +323,7 @@ static void refresh(void) {
     nes_mod_set_function_hook_enabled("mm4.view.begin", active);
     nes_mod_set_function_hook_enabled("mm4.view.part", active);
     nes_mod_set_function_hook_enabled("mm4.view.dma", active);
+    nes_mod_set_function_hook_enabled("mm4.hud.native",s_coop);
     cyc_render_set_compositor(active ? render : NULL, NULL);
     cyc_render_set_stock_compositing(active != 0);
     if(s_capture_policy!=active){cyc_render_capture_background(active!=0);s_capture_policy=active;}
@@ -325,7 +334,7 @@ void mm4_view_coop(int enabled) {s_coop=enabled!=0;refresh();}
 void mm4_view_no_flicker(int enabled) {s_no_flicker=enabled!=0;refresh();}
 static int get(uint8_t *out, int cap) {
     if (cap < sizeof s_frame + sizeof s_build) return -1;
-    memcpy(s_build.magic, "MV03", 4); memcpy(s_frame.magic, "MV03", 4);
+    memcpy(s_build.magic, "MV04", 4); memcpy(s_frame.magic, "MV04", 4);
     memcpy(out, &s_build, sizeof s_build); memcpy(out + sizeof s_build, &s_frame, sizeof s_frame);
     return sizeof s_build + sizeof s_frame;
 }
@@ -335,7 +344,7 @@ static int valid(const uint8_t *in, int len) {
     ViewFrame frames[2]; memcpy(frames, in, sizeof frames);
     for (int i = 0; i < 2; ++i) {
         const Mm4ProtoBody *b = &frames[i].body;
-        if (memcmp(frames[i].magic, "MV03", 4) || frames[i].valid > 1 || frames[i].panels>1 || frames[i].native_scene>1 || b->pose >= CYC_PROTO_POSE_COUNT ||
+        if (memcmp(frames[i].magic, "MV04", 4) || frames[i].valid > 1 || frames[i].panels>1 || frames[i].native_scene>1 || b->pose >= CYC_PROTO_POSE_COUNT ||
             b->active > 1 || b->right > 1 || b->flipped > 1 || b->behind > 1 || b->weapon > 13) return 0;
         int rain=frames[i].owners[0]==254;
         for (int j = 0; j < 64; ++j) {
