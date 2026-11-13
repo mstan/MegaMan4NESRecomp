@@ -1,4 +1,4 @@
-"""Native Coil/Jet/Marine/Wire controls in both ownership directions.
+"""Native Coil/Jet/Marine/Wire/Balloon controls in both ownership directions.
 
 Uses the normal reset route, then explicit body/energy prerequisites. Real
 native helper contact must spring/carry either rider, spending owner energy.
@@ -8,7 +8,7 @@ from pathlib import Path
 import argparse,json,os,subprocess,sys,shutil,wave,hashlib
 p=argparse.ArgumentParser()
 for key in ['exe','rom','root']:p.add_argument('--'+key,required=True)
-p.add_argument('--helper',choices=['coil','jet','marine','wire'],default='coil')
+p.add_argument('--helper',choices=['coil','jet','marine','wire','balloon'],default='coil')
 p.add_argument('--qualify',action='store_true');a=p.parse_args()
 r=Path(__file__).parent;q=Path(a.root);q.mkdir(parents=True,exist_ok=True)
 sys.path.insert(0,str(r));import qa_route
@@ -37,6 +37,45 @@ def run(name,end,lines,load=None,pokes=(),interp=False,saves=()):
 boot=q/'boot/end.cycstate'
 if not boot.is_file():
  _,lines=qa_route.expand(r.parent/'tests/routes/coop-gallery.route');run('boot',2501,[x for x in lines if int(x.split()[0])<=2200])
+if a.helper=='balloon':
+ for owner in[0,1]:
+  other=owner^1;tag=f'balloon-owner{owner}'
+  setup={0x300:1,0xB0:0x9C,0x3C:127,0xA0:0,0x330:128,0x348:0,0x378:148,0x390:0,0x30:0,0x3D8:0,0x3F0:0,0x3E:148,0x3F:0,0x301:0,0x302:0,0x303:0,0x304:0}
+  pokes=[(2501,s,z,v)for s in[0,1]for z,v in setup.items()]+[(2501,s,z,0)for s in[0,1]for z in range(0xB1,0xBE)]
+  pokes +=[(2501,owner,0xB6,0x9C),(2501,other,0xB6,0x8D),(2501,other,0x330,64)]
+  d,v,b=run(tag+'-summon',2531,['2501 HOLD 0305-0317 00',f'2503 X{owner+1}:R',f'2504 X{owner+1}:-',f'2512 {owner+1}:B',f'2513 {owner+1}:-'],boot,pokes)
+  source=d/'end.cycstate';x=personal(source,owner,0x333)+256*personal(source,owner,0x34B);y=personal(source,owner,0x37B)
+  checks[tag+'-actual-native-summon-and-cost']=personal(source,owner,0x303)==6 and b[owner]['ammo'][5]==26 and b[other]['ammo'][5]==13 and not v['coop']['failed'];record()
+  caplines=['2501 HOLD 0305-0317 00',f'2503 X{owner+1}:R',f'2504 X{owner+1}:-']+[line for f in[2512,2540,2570,2600]for line in[f'{f} {owner+1}:B',f'{f+1} {owner+1}:-']]
+  cap,cv,cb=run(tag+'-capacity',2601,caplines,boot,pokes)
+  checks[tag+'-native-three-Balloons-fourth-no-cost']=all(personal(cap/'end.cycstate',owner,0x300+slot)==6 for slot in[1,2,3])and cb[owner]['ammo'][5]==22 and cb[other]['ammo'][5]==13 and not cv['coop']['failed'];record()
+  if a.qualify:
+   ci,_,_=run(tag+'-capacity-interp',2601,caplines,boot,pokes,True)
+   checks[tag+'-capacity-backend']=all((cap/f).read_bytes()==(ci/f).read_bytes()for f in['frames.hash','end.cycstate','audio.wav','present.png']);record()
+  for rider in[owner,other]:
+   label=tag+f'-rider{rider}';placed={0x330:x&255,0x348:x>>8,0x378:y-24,0x390:0,0x30:1,0x3D8:0,0x3F0:255,0x3E:y-24,0x3F:0,0x3C:127}
+   pokes=[(2531,rider,z,v)for z,v in placed.items()]+[(2531,rider^1,0x330,64),(2531,rider^1,0x378,180),(2531,rider^1,0x30,0)]
+   lines=['2531 HOLD 0305-0317 00','2531 1:-','2531 2:-'];saves=(2535,2540,2560,2600)
+   n,v,b=run(label,2631,lines,source,pokes,saves=saves)
+   checks[label+'-native-rise']=b[rider]['y']<y-30 and 18<=personal(n/'end.cycstate',owner,0x37B)-b[rider]['y']<=25 and not v['coop']['failed']
+   checks[label+'-one-native-helper-clock']=personal(n/'at2600.cycstate',owner,0x46B)==111 and personal(n/'end.cycstate',owner,0x46B)==81
+   checks[label+'-owned-resources']=b[owner]['ammo'][5]==26 and b[other]['ammo'][5]==13 and all(personal(n/'end.cycstate',s,0xB0)&31==28 for s in[0,1]);record()
+   if a.qualify and rider!=owner:
+    i,_,_=run(label+'-interp',2631,lines,source,pokes,True,saves)
+    c,_,_=run(label+'-cold',2631,lines,n/'at2560.cycstate')
+    checks[label+'-backend']=all((n/f).read_bytes()==(i/f).read_bytes()for f in['frames.hash','end.cycstate','audio.wav','present.png'])
+    full=qa_route.load_hashes(n/'frames.hash');tail=qa_route.load_hashes(c/'frames.hash');checks[label+'-cold-hash']=len(tail)==70 and tail=={f:h for f,h in full.items()if f>2560}
+    checks[label+'-cold-firstPNG-state']=all((n/f).read_bytes()==(c/f).read_bytes()for f in['end.cycstate','present.png','present_02561.png'])
+    with wave.open(str(n/'audio.wav'))as z,wave.open(str(c/'audio.wav'))as w:pcm=z.readframes(z.getnframes());cold=w.readframes(w.getnframes())
+    checks[label+'-cold-pcm']=bool(cold)and pcm.endswith(cold);record()
+   j,_,jump=run(label+'-jump-off',2681,['2631 HOLD 0305-0317 00',f'2631 {rider+1}:A+RIGHT',f'2632 {rider+1}:RIGHT',f'2650 {rider+1}:-'],n/'end.cycstate',saves=(2631,2640))
+   checks[label+'-native-jump-off']=personal(j/'at2631.cycstate',rider,0x30)==1 and personal(j/'at2631.cycstate',rider,0x378)<b[rider]['y'] and jump[rider]['x']>=x+20 and jump[rider]['y']>=170
+   e,ev,eb=run(label+'-expiry',2731,['2631 HOLD 0305-0317 00','2631 1:-','2631 2:-'],n/'end.cycstate')
+   checks[label+'-native-expiry-no-extra-cost']=personal(e/'end.cycstate',owner,0x303)!=6 and eb[owner]['ammo'][5]==26 and eb[other]['ammo'][5]==13 and not ev['coop']['failed'];record()
+  aroot=q/(tag+f'-rider{owner}');broot=q/(tag+f'-rider{other}')
+  checks[tag+'-foreign-native-helper-fields-exact']=all(personal(aroot/f'at{f}.cycstate',owner,z)==personal(broot/f'at{f}.cycstate',owner,z)for f in[2535,2540,2560,2600]for z in range(0x303,0x5BC,24))
+  checks[tag+'-foreign-native-body-phase-bounded']=all(abs(personal(aroot/f'at{f}.cycstate',owner,0x378)-personal(broot/f'at{f}.cycstate',other,0x378))<=1 for f in[2535,2540,2560,2600]);record()
+ sys.exit(not all(checks.values()))
 if a.helper=='wire':
  for weapon in [5]:
   for owner in [0,1]:

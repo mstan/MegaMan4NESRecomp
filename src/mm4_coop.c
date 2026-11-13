@@ -116,7 +116,10 @@ static void capture(Player *p) { for(int i=0;i<s_count;i++)p->ram[i]=R(s_addr[i]
 static void project(const Player *p) { for(int i=0;i<s_count;i++)P(s_addr[i],p->ram[i]); }
 /* Actor AI needs the recipient's body, inventory and control state. The
  * physical native palette remains the anchor's while that AI runs. */
-static int target_field(int a) {return !(a>=0x610 && a<0x638);}
+static int target_field(int a) {
+    if(A.active==2)return (a>=0x300 && a<=0x5B8 && (a-0x300)%24==0) || (a>=0x30 && a<=0x47);
+    return !(a>=0x610 && a<0x638);
+}
 static void target_capture(Player *p) {for(int i=0;i<s_count;i++)if(target_field(s_addr[i]))p->ram[i]=R(s_addr[i]);}
 static void target_project(const Player *p) {for(int i=0;i<s_count;i++)if(target_field(s_addr[i]))P(s_addr[i],p->ram[i]);}
 static int personal(const Player *p,int a) { int i=s_index[a];return i?p->ram[i-1]:R(a); }
@@ -159,17 +162,35 @@ static void warp_follow(void) {
 }
 static int target_begin(uint16_t address) {
     (void)address;
-    if(!s_on || !C.initialized || C.menu || A.active || W.active || s_scope || cyc_mod_isolated() || R(0x30)>=8)return 0;
+    if(!s_on || !C.initialized || C.menu || A.active || W.active || R(0x30)>=8)return 0;
     CycModRegs r={0};cyc_mod_regs(&r);
-    if(r.x<5 || r.x>=24 || !R(0x300+r.x))return 0;
+    int balloon=r.x>=1 && r.x<=3 && R(0x300+r.x)==6;
+    if(!balloon && (s_scope || cyc_mod_isolated() || r.x<5 || r.x>=24 || !R(0x300+r.x)))return 0;
     target_capture(&C.player[C.current]);
     int chosen=C.anchor,best=0x7fffffff,x=R(0x330+r.x)+256*R(0x348+r.x),y=R(0x378+r.x);
-    for(int seat=0;seat<2;seat++)if(!C.player[seat].dead && !(C.withdrawn&(1u<<seat)) && (personal(&C.player[seat],0xB0)&31)) {
+    if(balloon) {
+        chosen=C.current;
+        /* Same native F95D shape used by the Balloon's landing response.
+         * Prefer its owner on contact, otherwise use the touching partner.
+         * Only actor0/body fields are projected; its native helper pool,
+         * energy and single motion/lifetime update retain their owner. */
+        for(int i=0;i<2;i++) {
+            int seat=C.current^i;Player *p=&C.player[seat];
+            int height=mm4_cart_prg(0x3F,0xF9B4+13)-(personal(p,0x558)==0x10?8:0);
+            if(mm4_coop_live(seat) && !personal(p,0x390) && !R(0x390+r.x) &&
+               (R(0x528+r.x)&0x84)==0x80 &&
+               abs(x-personal(p,0x330)-256*personal(p,0x348))<mm4_cart_prg(0x3F,0xF9F4+13) &&
+               abs(y-personal(p,0x378))<=height){chosen=seat;break;}
+        }
+        if(chosen==C.current)return 0;
+        best=0;
+    }
+    else for(int seat=0;seat<2;seat++)if(!C.player[seat].dead && !(C.withdrawn&(1u<<seat)) && (personal(&C.player[seat],0xB0)&31)) {
         int distance=abs(x-personal(&C.player[seat],0x330)-256*personal(&C.player[seat],0x348))+abs(y-personal(&C.player[seat],0x378));
         if(distance<best){chosen=seat;best=distance;}
     }
     if(best==0x7fffffff)return 0;
-    A.active=1;A.owner=C.current;A.seat=(uint8_t)chosen;A.stack=(uint8_t)(r.s+2);A.old_x=R(0x27);A.old_page=R(0x28);
+    A.active=(uint8_t)(balloon?2:1);A.owner=C.current;A.seat=(uint8_t)chosen;A.stack=(uint8_t)(r.s+2);A.old_x=R(0x27);A.old_page=R(0x28);
     for(int i=0;i<4;i++)A.input[i]=R(0x14+i);
     C.current=(uint8_t)chosen;target_project(&C.player[chosen]);
     P(0x14,A.pressed[chosen]);P(0x16,C.raw[chosen]&~0x30);P(0x15,0);P(0x17,0);
@@ -177,7 +198,7 @@ static int target_begin(uint16_t address) {
 }
 static int target_end(uint16_t address) {
     (void)address;
-    if(!s_on || !A.active || cyc_mod_isolated())return 0;
+    if(!s_on || !A.active || (cyc_mod_isolated() && A.active!=2))return 0;
     CycModRegs r={0};cyc_mod_regs(&r);if(r.s!=A.stack)return 0;
     int chosen=C.current,warp=R(0x22)==14 && R(0x30)==15 && R(0xEB)<24 && R(0x300+R(0xEB))==0xB3;
     int intro=R(0x30)==9 && R(0xEB)==R(0x146);
@@ -225,6 +246,8 @@ static int hooks(int enable) {
             allowed|=!strcmp(h->id,"mm4.coop.personal-end");
             allowed|=!strcmp(h->id,"mm4.coop.marine-out");
             allowed|=!strncmp(h->id,"mm4.coop.bright-",16);
+            allowed|=!strcmp(h->id,"mm4.coop.balloon-floor");
+            allowed|=!strcmp(h->id,"mm4.coop.target-begin") || !strcmp(h->id,"mm4.coop.target-end");
             allowed|=!strcmp(h->id,"mm4.coop.dying") || !strcmp(h->id,"mm4.coop.pit") || !strcmp(h->id,"mm4.coop.death-music") || !strcmp(h->id,"mm4.coop.death-wait");
             if(h->enabled && !allowed)nes_mod_set_function_hook_enabled(h->id,0);
         }
@@ -265,6 +288,7 @@ static int private_step(int seat) {
     }
     int state=personal(&C.player[seat],0x30);
     if((!C.teleport[seat] && state>6) || R(0x30)>=8)return 1;
+    Target target_before=A;Player partner_before=C.player[seat^1],own_before=C.player[seat];
     uint8_t before[2048],after[2048];snapshot_ram(before);
     if(!cyc_mod_isolate_begin())return 0;
     int owner=C.current;C.current=(uint8_t)seat;project(&C.player[seat]);center_camera();
@@ -301,7 +325,7 @@ static int private_step(int seat) {
     }
     if(enabled)hooks(0);s_scope=0;cyc_mod_isolate_end();C.current=(uint8_t)owner;
     mm4_helpers_commit(ok);
-    if(!ok){s_bright_ticked=bright_ticked;s_bright_restore=-1;}
+    if(!ok){s_bright_ticked=bright_ticked;s_bright_restore=-1;A=target_before;C.player[seat^1]=partner_before;C.player[seat]=own_before;}
     if(ok)merge_world(before,after);return ok;
 }
 static void initialize(void) {
@@ -906,6 +930,7 @@ void mm4_coop_set(int enabled,int roster) {
     nes_mod_set_function_hook_enabled("mm4.coop.marine-out",s_on);
     nes_mod_set_function_hook_enabled("mm4.coop.bright-before",s_on);
     nes_mod_set_function_hook_enabled("mm4.coop.bright-after",s_on);
+    nes_mod_set_function_hook_enabled("mm4.coop.balloon-floor",s_on);
     for(int i=0;i<sizeof HOOKS/sizeof *HOOKS;i++)nes_mod_set_function_hook_enabled(HOOKS[i],s_on);
     source_hooks();
     nes_mod_set_function_hook_enabled("mm4.coop.target-begin",s_on);nes_mod_set_function_hook_enabled("mm4.coop.target-end",s_on);
@@ -938,7 +963,7 @@ static int valid(const uint8_t *in,int len) {
 }
 static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(&C,in,sizeof C);else mm4_coop_power();source_hooks();return 1;}
 static int target_get(uint8_t *out,int cap){if(cap<sizeof A)return -1;memcpy(A.magic,"M4AT",4);memcpy(out,&A,sizeof A);return sizeof A;}
-static int target_valid(const uint8_t *in,int n){Target p;if(!n)return !A.active;if(!in||n!=sizeof p)return 0;memcpy(&p,in,sizeof p);return !memcmp(p.magic,"M4AT",4)&&p.active<=1&&p.owner<2&&p.seat<2;}
+static int target_valid(const uint8_t *in,int n){Target p;if(!n)return !A.active;if(!in||n!=sizeof p)return 0;memcpy(&p,in,sizeof p);return !memcmp(p.magic,"M4AT",4)&&p.active<=2&&p.owner<2&&p.seat<2;}
 static int target_set(const uint8_t *in,int n){if(!target_valid(in,n))return 0;if(n)memcpy(&A,in,sizeof A);else memset(&A,0,sizeof A);return 1;}
 static int warp_get(uint8_t *out,int cap){if(cap<sizeof W)return -1;memcpy(W.magic,"M4WT",4);memcpy(out,&W,sizeof W);return sizeof W;}
 static int warp_valid(const uint8_t *in,int n){Warp p;if(!n)return !W.active;if(!in||n!=sizeof p)return 0;memcpy(&p,in,sizeof p);return !memcmp(p.magic,"M4WT",4)&&p.active<=2&&!p.reserved[0]&&!p.reserved[1];}
@@ -947,6 +972,7 @@ void mm4_coop_register(void) {
     nes_mod_register_function_entry_plugin("mm4.coop.marine-out",0x8530,marine_out);
     nes_mod_register_function_entry_plugin("mm4.coop.bright-before",0x9195,bright_tick_before);
     nes_mod_register_function_entry_plugin("mm4.coop.bright-after",0x91A6,bright_tick_after);
+    nes_mod_register_function_entry_plugin("mm4.coop.balloon-floor",0xF7D8,mm4_helpers_floor);
     nes_mod_register_function_entry_plugin("mm4.coop.source-start",0xC5A6,source_start);
     nes_mod_register_function_entry_plugin("mm4.coop.source-loaded",0xC5C4,source_loaded);
     mm4_menu_register();nes_mod_register_function_entry_plugin("mm4.coop.menu-idle",0x96D7,menu_idle);

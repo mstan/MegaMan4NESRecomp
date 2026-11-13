@@ -268,3 +268,8 @@ addr = 0x91A6
 length = 8
 crc32 = 0x333F1D94
 
+[[mod_function_hook]]
+id = "mm4.coop.balloon-floor"
+addr = 0xF7D8
+length = 8
+crc32 = 0x60001D35
