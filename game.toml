@@ -273,3 +273,9 @@ id = "mm4.coop.balloon-floor"
 addr = 0xF7D8
 length = 8
 crc32 = 0x60001D35
+
+[[mod_function_hook]]
+id = "mm4.coop.rain-frozen"
+addr = 0x80EA
+length = 8
+crc32 = 0xADD87249

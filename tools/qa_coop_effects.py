@@ -6,7 +6,7 @@ from pathlib import Path
 import argparse,json,os,subprocess,sys,shutil,wave,hashlib,struct
 p=argparse.ArgumentParser()
 for key in ['exe','rom','root']:p.add_argument('--'+key,required=True)
-p.add_argument('--effect',choices=['bright','rain'],default='bright')
+p.add_argument('--effect',choices=['bright','rain','mixed','withdraw'],default='bright')
 p.add_argument('--qualify',action='store_true');a=p.parse_args()
 weapon=4 if a.effect=='rain'else 12;cut=2600 if a.effect=='rain'else 2530
 if a.effect=='rain':from PIL import Image
@@ -44,7 +44,40 @@ def run(name,end,lines,load=None,pokes=(),interp=False,saves=()):
  observations[name]=dict(row=v,players=bodies);record();return d,v,bodies
 
 
+def qualify(name,n,end,lines,boot,pokes,saves,cut):
+ i,_,_=run(name+'-interp',end,lines,boot,pokes,True,saves)
+ c,_,_=run(name+'-cold',end,lines,n/f'at{cut}.cycstate')
+ checks[name+'-backend']=all((n/f).read_bytes()==(i/f).read_bytes()for f in['frames.hash','end.cycstate','audio.wav','present.png'])
+ full=qa_route.load_hashes(n/'frames.hash');tail=qa_route.load_hashes(c/'frames.hash');checks[name+'-cold-hash']=len(tail)==end-1-cut and tail=={f:h for f,h in full.items()if f>cut}
+ checks[name+'-cold-firstPNG-state']=all((n/f).read_bytes()==(c/f).read_bytes()for f in['end.cycstate','present.png',f'present_{cut+1:05d}.png'])
+ with wave.open(str(n/'audio.wav'))as x,wave.open(str(c/'audio.wav'))as y:pcm=x.readframes(x.getnframes());cold=y.readframes(y.getnframes())
+ checks[name+'-cold-pcm']=bool(cold)and pcm.endswith(cold);record()
+
 _,lines=qa_route.expand(r.parent/'tests/routes/coop-gallery.route');boot,_,_=run('boot',2501,[x for x in lines if int(x.split()[0])<=2200]);boot=boot/'end.cycstate'
+if a.effect in('mixed','withdraw'):
+ for caster in[0,1]:
+  other=caster^1;name=f'{a.effect}-caster{caster}'
+  setup={0x300:1,0xB0:0x9C,0x3C:127,0xA0:0,0x330:128,0x348:0,0x378:180,0x390:0,0x30:0,0x3D8:0,0x3F0:0,0x3E:180,0x3F:0,0x301:0,0x302:0,0x303:0,0x304:0}
+  pokes=[(2501,s,z,v)for s in[0,1]for z,v in setup.items()]+[(2501,s,z,0)for s in[0,1]for z in range(0xB1,0xBE)]+[(2501,caster,0xBC,0x9C)]
+  lines=[f'2503 X{caster+1}:R',f'2504 X{caster+1}:-',f'2512 {caster+1}:B',f'2513 {caster+1}:-']
+  if a.effect=='mixed':
+   pokes +=[(2501,other,0xB4,0x9C)];lines +=[f'2503 X{other+1}:R',f'2504 X{other+1}:-',f'2512 {other+1}:B',f'2513 {other+1}:-'];end=2661;cut=2600;saves=(2560,2600)
+  else:
+   pokes +=[(2501,other,0x330,64)];lines +=['2501 HOLD 0305-0317 00',f'2515 {caster+1}:SELECT',f'2630 {caster+1}:-',f'2840 {other+1}:START',f'2841 {other+1}:-'];end=2851;cut=2650;saves=(2560,2650,2830)
+  d,v,b=run(name,end,lines,boot,pokes,saves=saves);m=memory(d/'end.cycstate')
+  checks[name+'-native-owned-cost']=personal(d/'end.cycstate',caster,0xBC)&31==24 and not v['coop']['failed']
+  if a.effect=='mixed':
+   before=memory(d/'at2560.cycstate');during=memory(d/'at2600.cycstate')
+   checks[name+'-actually-frozen-before-Rain']=before[0x300+23]==0x37 and before[0x450+23]==1 and before[0x5B8+23]in(0x81,0x82)
+   checks[name+'-Rain-defeated-frozen-enemy']=during[0x13A]==44 and during[0x450+23]==0 and m[0x300+23]==0
+   checks[name+'-independent-global-clocks']=during[0x13C]+256*during[0x13D]==212 and personal(d/'end.cycstate',other,0xB4)&31==24
+  else:
+   checks[name+'-real-90-update-withdrawal']=v['coop']['withdrawals'][caster]==1 and v['coop']['withdrawals'][other]==0
+   checks[name+'-shared-freeze-expired']=not(m[0x13C]or m[0x13D])
+   checks[name+'-survivor-native-inventory-unlocked']=v['coop']['menu']==1 and v['coop']['pauser']==other and v['coop']['lives']==2
+  record()
+  if a.qualify:qualify(name,d,end,lines,boot,pokes,saves,cut)
+ sys.exit(not all(checks.values()))
 for name,owners in [('primary',[0]),('guest',[1]),('both',[0,1]),('none',[])]:
  setup={0x300:1,0xB0:0x9C,0x3C:127,0xA0:0,0x330:128,0x348:0,0x378:180,0x390:0,0x30:0,0x3D8:0,0x3F0:0,0x3E:180,0x3F:0,0x301:0,0x302:0,0x303:0,0x304:0}
  pokes=[(2501,s,z,v)for s in[0,1]for z,v in setup.items()]+[(2501,s,z,0)for s in[0,1]for z in range(0xB1,0xBE)]

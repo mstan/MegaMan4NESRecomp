@@ -42,13 +42,16 @@ typedef struct {
 } Coop;
 static Coop C;
 static int s_on,s_roster,s_scope,s_personal_bhv,s_collision,s_death_wait,s_view;
-/* Transient journal inside one controller update, never across a frame. */
-static int s_bright_ticked,s_bright_restore=-1;
+/* A native controller can yield through NMI; retain its one-clock journal
+ * across snapshots as well as the two personal controller calls. */
+typedef struct {char magic[4];uint8_t ticked,reserved[3];int32_t restore;} Effects;
+static Effects E={{0},0,{0},-1};
 static uint16_t s_addr[PERSONAL_CAP],s_index[2048];
 static int s_count;
 static int s_wait_both;
 static void finish_wait(void);
 static void source_hooks(void);
+static void effect_hooks(void);
 typedef struct {
     char magic[4];uint8_t active,owner,seat,stack,input[4],old_x,old_page,pressed[2];
     uint64_t targets[2];
@@ -249,6 +252,7 @@ static int hooks(int enable) {
             allowed|=!strcmp(h->id,"mm4.coop.marine-out");
             allowed|=!strncmp(h->id,"mm4.coop.bright-",16);
             allowed|=!strcmp(h->id,"mm4.coop.balloon-floor");
+            allowed|=!strcmp(h->id,"mm4.coop.rain-frozen");
             allowed|=!strcmp(h->id,"mm4.coop.target-begin") || !strcmp(h->id,"mm4.coop.target-end");
             allowed|=!strcmp(h->id,"mm4.coop.dying") || !strcmp(h->id,"mm4.coop.pit") || !strcmp(h->id,"mm4.coop.death-music") || !strcmp(h->id,"mm4.coop.death-wait");
             if(h->enabled && !allowed)nes_mod_set_function_hook_enabled(h->id,0);
@@ -296,7 +300,7 @@ static int private_step(int seat) {
     int owner=C.current;C.current=(uint8_t)seat;project(&C.player[seat]);center_camera();
     A.pressed[seat]=(uint8_t)(C.raw[seat]&~C.player[seat].previous&~0x30);
     P(0x14,A.pressed[seat]);P(0x16,C.raw[seat]&~0x30);P(0x15,0);P(0x17,0);
-    int bright_ticked=s_bright_ticked;
+    int bright_ticked=E.ticked;
     s_scope=1;int enabled=hooks(1),ok=enabled;CycModRegs r;cyc_mod_regs(&r);
     P(0xf5,0x3c);P(0xf6,0x3d);if(ok)ok=cyc_mod_call(0xff37,&r);
     if(ok)ok=mm4_controls_art(R(0xa0));
@@ -327,7 +331,7 @@ static int private_step(int seat) {
     }
     if(enabled)hooks(0);s_scope=0;cyc_mod_isolate_end();C.current=(uint8_t)owner;
     mm4_helpers_commit(ok);
-    if(!ok){s_bright_ticked=bright_ticked;s_bright_restore=-1;A=target_before;C.player[seat^1]=partner_before;C.player[seat]=own_before;}
+    if(!ok){E.ticked=bright_ticked;E.restore=-1;A=target_before;C.player[seat^1]=partner_before;C.player[seat]=own_before;}
     if(ok)merge_world(before,after);return ok;
 }
 static void initialize(void) {
@@ -420,7 +424,7 @@ static void select_tick(void) {
 }
 static int controller(uint16_t address) {
     (void)address;if(!s_on || cyc_mod_isolated())return 0;
-    s_bright_ticked=0;s_bright_restore=-1;
+    E.ticked=0;E.restore=-1;
     C.waited[0]=C.waited[1]=0;
     if(C.menu && R(0x22)<16) {
         capture(&C.player[C.pauser]);C.current=C.anchor;project(&C.player[C.anchor]);C.menu=C.menu_ready=C.menu_busy=0;P(0x18,255);
@@ -442,6 +446,14 @@ static int controller(uint16_t address) {
     P(0x15,0);P(0x17,0);return 0;
 }
 static int after_controller(uint16_t address) {
+    if(!cyc_mod_isolated()) {
+        unsigned timer=(unsigned)R(0x13C)|((unsigned)R(0x13D)<<8);
+        int missing=s_on?(C.initialized && !C.menu && !E.ticked):R(0xA0)!=12;
+        /* A hidden/dead/waiting caster, or co-op deactivation, cannot leave
+         * the shared world permanently frozen. Native callers still own
+         * their normal decrement; this fills only a missing world tick. */
+        if(timer && missing){timer--;P(0x13C,timer);P(0x13D,timer>>8);E.ticked=1;if(!timer && !s_on)effect_hooks();}
+    }
     (void)address;if(s_on && C.initialized && !cyc_mod_isolated() && !C.menu) {
         capture(&C.player[C.anchor]);C.updates[C.anchor]++;C.player[C.anchor].previous=C.raw[C.anchor];
         if(W.active){warp_follow();if(R(0x30)<8 && (W.active==2 || R(0x2A)!=W.source_room))W.active=0;}
@@ -498,14 +510,23 @@ static int personal_end(uint16_t address) {
 }
 static int bright_tick_before(uint16_t address) {
     (void)address;if(!s_on || !C.initialized || (cyc_mod_isolated() && !s_scope))return 0;
-    s_bright_restore=s_bright_ticked?(R(0x13C)|(R(0x13D)<<8)):-1;return 0;
+    E.restore=E.ticked?(R(0x13C)|(R(0x13D)<<8)):-1;return 0;
+}
+static int rain_frozen(uint16_t address) {
+    (void)address;if(!s_on || !C.initialized || !R(0x13A) || !(R(0x13C)|R(0x13D)))return 0;
+    CycModRegs r;cyc_mod_regs(&r);if(r.x<5 || r.x>=24)return 0;
+    int flag=R(0x5B8+r.x);if(flag!=0x81 && flag!=0x82)return 0;
+    /* Native Rain rejects an existing damage timer. Flash Stopper's
+     * separate freeze values must not make the target immune to damage.
+     * Leave RAM untouched so immune targets retain their original freeze. */
+    r.a=0;r.p=(uint8_t)((r.p&~0x82)|2);cyc_mod_set_regs(&r);return 0;
 }
 static int bright_tick_after(uint16_t address) {
     (void)address;if(!s_on || !C.initialized || (cyc_mod_isolated() && !s_scope))return 0;
     /* Original init/cost, Buster and per-player flash still run. A second
      * Bright controller cannot decrement the same shared freeze twice. */
-    if(s_bright_restore>=0){P(0x13C,s_bright_restore);P(0x13D,s_bright_restore>>8);}
-    s_bright_restore=-1;s_bright_ticked=1;return 0;
+    if(E.restore>=0){P(0x13C,E.restore);P(0x13D,E.restore>>8);}
+    E.restore=-1;E.ticked=1;return 0;
 }
 static int world_begin(uint16_t address) { (void)address;if(s_on && C.initialized && !cyc_mod_isolated())C.world_updates++;return 0; }
 static int marine_out(uint16_t address) {
@@ -916,7 +937,7 @@ void mm4_coop_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
         }
     }
 }
-void mm4_coop_power(void) { memset(&C,0,sizeof C);memset(&A,0,sizeof A);memset(&W,0,sizeof W);C.pending_pause=255;s_scope=s_personal_bhv=s_collision=s_death_wait=0;addresses();mm4_menu_reset(); }
+void mm4_coop_power(void) { memset(&C,0,sizeof C);memset(&A,0,sizeof A);memset(&W,0,sizeof W);memset(&E,0,sizeof E);E.restore=-1;C.pending_pause=255;s_scope=s_personal_bhv=s_collision=s_death_wait=0;addresses();mm4_menu_reset(); }
 static const char *const HOOKS[]={"mm4.coop.controller","mm4.coop.after-controller","mm4.coop.personal-end","mm4.coop.world-begin","mm4.coop.pause","mm4.coop.after-scroll","mm4.coop.before-scroll","mm4.coop.dying","mm4.coop.death-music","mm4.coop.after-world","mm4.coop.retry","mm4.coop.arrival","mm4.coop.death-wait","mm4.coop.pit","mm4.coop.frame-end","mm4.coop.before-director","mm4.coop.before-vertical","mm4.coop.after-vertical","mm4.coop.scene-draw"};
 void mm4_coop_set(int enabled,int roster) {
     int on=enabled!=0,roles=roster!=0;
@@ -933,8 +954,10 @@ void mm4_coop_set(int enabled,int roster) {
     nes_mod_set_function_hook_enabled("mm4.coop.bright-before",s_on);
     nes_mod_set_function_hook_enabled("mm4.coop.bright-after",s_on);
     nes_mod_set_function_hook_enabled("mm4.coop.balloon-floor",s_on);
+    nes_mod_set_function_hook_enabled("mm4.coop.rain-frozen",s_on);
     for(int i=0;i<sizeof HOOKS/sizeof *HOOKS;i++)nes_mod_set_function_hook_enabled(HOOKS[i],s_on);
     source_hooks();
+    effect_hooks();
     nes_mod_set_function_hook_enabled("mm4.coop.target-begin",s_on);nes_mod_set_function_hook_enabled("mm4.coop.target-end",s_on);
     nes_mod_set_local_only("MM4 personal co-op (unqualified netplay)",s_on);mm4_view_coop(s_on);
     mm4_coop_view_set(s_view);
@@ -963,7 +986,11 @@ static int valid(const uint8_t *in,int len) {
     }
     return 1;
 }
-static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(&C,in,sizeof C);else mm4_coop_power();source_hooks();return 1;}
+static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(&C,in,sizeof C);else mm4_coop_power();source_hooks();effect_hooks();return 1;}
+static void effect_hooks(void){nes_mod_set_function_hook_enabled("mm4.coop.after-controller",s_on || R(0x13C) || R(0x13D));}
+static int effects_get(uint8_t *out,int cap){if(cap<sizeof E)return -1;memcpy(E.magic,"M4EF",4);memcpy(out,&E,sizeof E);return sizeof E;}
+static int effects_valid(const uint8_t *in,int n){Effects p;if(!n)return !s_on;if(!in||n!=sizeof p)return 0;memcpy(&p,in,sizeof p);return !memcmp(p.magic,"M4EF",4)&&p.ticked<=1&&!p.reserved[0]&&!p.reserved[1]&&!p.reserved[2]&&p.restore>=-1&&p.restore<=65535;}
+static int effects_set(const uint8_t *in,int n){if(!effects_valid(in,n))return 0;if(n)memcpy(&E,in,sizeof E);else{memset(&E,0,sizeof E);E.restore=-1;}effect_hooks();return 1;}
 static int target_get(uint8_t *out,int cap){if(cap<sizeof A)return -1;memcpy(A.magic,"M4AT",4);memcpy(out,&A,sizeof A);return sizeof A;}
 static int target_valid(const uint8_t *in,int n){Target p;if(!n)return !A.active;if(!in||n!=sizeof p)return 0;memcpy(&p,in,sizeof p);return !memcmp(p.magic,"M4AT",4)&&p.active<=2&&p.owner<2&&p.seat<2;}
 static int target_set(const uint8_t *in,int n){if(!target_valid(in,n))return 0;if(n)memcpy(&A,in,sizeof A);else memset(&A,0,sizeof A);return 1;}
@@ -975,6 +1002,7 @@ void mm4_coop_register(void) {
     nes_mod_register_function_entry_plugin("mm4.coop.bright-before",0x9195,bright_tick_before);
     nes_mod_register_function_entry_plugin("mm4.coop.bright-after",0x91A6,bright_tick_after);
     nes_mod_register_function_entry_plugin("mm4.coop.balloon-floor",0xF7D8,mm4_helpers_floor);
+    nes_mod_register_function_entry_plugin("mm4.coop.rain-frozen",0x80EA,rain_frozen);
     nes_mod_register_function_entry_plugin("mm4.coop.source-start",0xC5A6,source_start);
     nes_mod_register_function_entry_plugin("mm4.coop.source-loaded",0xC5C4,source_loaded);
     mm4_menu_register();nes_mod_register_function_entry_plugin("mm4.coop.menu-idle",0x96D7,menu_idle);
@@ -996,6 +1024,7 @@ void mm4_coop_register(void) {
     nes_mod_register_function_entry_plugin("mm4.coop.target-end",0x8097,target_end);
     nes_mod_register_savestate_hook("mm4.coop-target",target_get,target_set);nes_mod_register_savestate_validator("mm4.coop-target",target_valid);
     nes_mod_register_savestate_hook("mm4.coop-warp",warp_get,warp_set);nes_mod_register_savestate_validator("mm4.coop-warp",warp_valid);
+    nes_mod_register_savestate_hook("mm4.coop-effects",effects_get,effects_set);nes_mod_register_savestate_validator("mm4.coop-effects",effects_valid);
 }
 int mm4_coop_json(char *out,int cap) {
     return snprintf(out,cap,"\"coop\":{\"on\":%d,\"ready\":%u,\"anchor\":%u,\"menu\":%u,\"pauser\":%u,\"world\":%llu,\"updates\":[%llu,%llu],\"failed\":%llu,\"dead\":[%u,%u],\"retry\":%u,\"lives\":%u,\"inventory\":[%u,%u,%u,%d,%d,%d,%d,%d,%d,%u],\"source\":[%u,%u,%u,%llu,%llu],\"wait\":[%u,%u],\"transport\":[%u,%u,%u,%u,%u],\"withdrawals\":[%llu,%llu],\"rejoins\":[%llu,%llu],\"players\":[[%d,%d,%d,%d,%d,%d],[%d,%d,%d,%d,%d,%d]]}",
