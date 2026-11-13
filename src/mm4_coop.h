@@ -11,6 +11,7 @@ int mm4_coop_view_mode(void);
 void mm4_coop_view_set(int mode);
 int mm4_coop_view_rects(int left[2]);
 int mm4_coop_scene_locked(void);
+int mm4_coop_source_pending(void);
 int mm4_coop_test_poke(const char *value);
 int mm4_coop_native_scope(void);
 int mm4_coop_menu_active(void);

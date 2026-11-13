@@ -36,6 +36,9 @@ typedef struct {
     uint8_t checkpoint,revive_pending;
     uint8_t wait_mode,waiting,wait_direction[2],wait_page[2],wait_out[2],wait_flags[2];
     uint8_t menu_ready,menu_busy,menu_user,menu_pending[2],menu_phase;
+    uint8_t source_pending,source_page,source_offset,source_nt,source_ram[8],source_stack[10];
+    CycModRegs source_regs;
+    uint64_t source_handoffs[2];
 } Coop;
 static Coop C;
 static int s_on,s_roster,s_scope,s_personal_bhv,s_collision,s_death_wait,s_view;
@@ -43,6 +46,7 @@ static uint16_t s_addr[PERSONAL_CAP],s_index[2048];
 static int s_count;
 static int s_wait_both;
 static void finish_wait(void);
+static void source_hooks(void);
 typedef struct {
     char magic[4];uint8_t active,owner,seat,stack,input[4],old_x,old_page,pressed[2];
     uint64_t targets[2];
@@ -66,7 +70,8 @@ int mm4_coop_wait_both(void) {return s_wait_both;}
 void mm4_coop_wait_set(int both) {s_wait_both=both!=0;if(!s_wait_both)finish_wait();}
 int mm4_coop_view_mode(void) {return s_on?s_view:0;}
 int mm4_coop_independent(void) {return s_on && s_view!=0;}
-int mm4_coop_scene_locked(void) {return C.scene_active || R(0x19) || R(0x1A) || R(0x30)>=8;}
+int mm4_coop_scene_locked(void) {return C.source_pending || C.scene_active || R(0x19) || R(0x1A) || R(0x30)>=8;}
+int mm4_coop_source_pending(void) {return C.source_pending;}
 void mm4_coop_view_set(int mode) {
     if(mode<0 || mode>3)return;
     s_view=mode;mm4_view_coop(s_on);mm4_wide_views_changed();
@@ -528,16 +533,18 @@ static int before_horizontal_scroll(uint16_t address) {
     }return 0;
 }
 static int vertical_intent(const Player *p) {
-    if(personal(p,0x390) || personal(p,0x348)!=R(0xF9))return 0;
+    int page=personal(p,0x348),independent=mm4_coop_independent();
+    if(personal(p,0x390) || (page!=R(0xF9) && (!independent || (R(0x2B)&0xC0))))return 0;
+    int offset=page-R(0xF9)+R(0x2E);if(offset<0 || offset>R(0x2D))return 0;
     int y=personal(p,0x378),direction=y>=0xE8?4:(y<8 && personal(p,0x30)==3?8:0);
     if(!direction)return 0;
     if(R(0x2B)&0xC0)return 1;
-    if(R(0xFC))return 0;
+    if(!independent && R(0xFC))return 0;
     int room=R(0x2B)&15,bank=R(0x22)|0x20,flags=direction<<4,forward=0;
     /* CD24's horizontal/vertical junctions and CCD0's authored links. */
     if(!R(0x2D))forward=(mm4_cart_prg(bank,0xB531+room)&flags)!=0;
-    else if(R(0x2E)){
-        if(R(0x2E)!=R(0x2D))return 0;
+    else if(offset){
+        if(offset!=R(0x2D))return 0;
         forward=1;
     }
     if(forward){if(mm4_cart_prg(bank,0xB531+room)&flags&0xC0)return 1;}
@@ -546,8 +553,8 @@ static int vertical_intent(const Player *p) {
         if(((current&0xC0) || !(previous&0x20)) && (previous&0xC0) && ((previous^0xC0)&flags))return 1;
     }
     for(int at=0;at<256;at+=4){
-        int page=mm4_cart_prg(bank,0xB540+at);if(page&128)break;
-        if(page==R(0xF9) && (mm4_cart_prg(bank,0xB541+at)&flags))return 1;
+        int linked_page=mm4_cart_prg(bank,0xB540+at);if(linked_page&128)break;
+        if(linked_page==page && (mm4_cart_prg(bank,0xB541+at)&flags))return 1;
     }
     return 0;
 }
@@ -593,10 +600,63 @@ static int wait_for_partner(int seat,int direction) {
     }
     return 1;
 }
+/* The original C5A6 column loop yields through FF1C/NMI. Refill the newly
+ * selected source page on that real clock, then publish its native PPU origin
+ * before the unchanged room director resumes. Player/world AI does not rerun. */
+static void source_hooks(void) {
+    nes_mod_set_function_hook_enabled("mm4.coop.before-director",s_on || C.source_pending);
+    nes_mod_set_function_hook_enabled("mm4.coop.source-start",C.source_pending!=0);
+    nes_mod_set_function_hook_enabled("mm4.coop.source-loaded",C.source_pending!=0);
+}
+static int source_start(uint16_t address) {
+    (void)address;if(C.source_pending!=3 || cyc_mod_isolated())return 0;
+    CycModRegs r={0};cyc_mod_regs(&r);if(r.s!=(uint8_t)(C.source_regs.s-6))return 0;
+    P(0x2A,C.source_page);P(0x45,C.source_page+1);C.source_pending=1;return 0;
+}
+static int source_loaded(uint16_t address) {
+    (void)address;if(C.source_pending!=1 || cyc_mod_isolated())return 0;
+    CycModRegs r={0};cyc_mod_regs(&r);if(r.s!=(uint8_t)(C.source_regs.s-6))return 0;
+    P(0xF9,C.source_page);P(0xFC,0);P(0x25,0);P(0x2E,C.source_offset);
+    /* Use the initializer's complete viewport origin, including its next
+     * column cursor. Keeping the old ring phase corrupts the ensuing scroll. */
+    P(0x23,1);P(0x2F,1);P(0xFA,0);P(0xFF,R(0xFF)&~3);
+    P(0x9E,mm4_cart_prg(R(0x22)|0x20,0xB300+C.source_page));P(0x9F,R(0x9E));
+    P(0xF5,C.source_ram[1]);P(0xF6,C.source_ram[2]);
+    C.source_pending=2;return 1; /* RTS enters one final native FF1C publication. */
+}
+static int source_begin(int page) {
+    CycModRegs r={0};cyc_mod_regs(&r);C.source_regs=r;
+    C.source_page=(uint8_t)page;C.source_offset=(uint8_t)(page-R(0xF9)+R(0x2E));
+    C.source_nt=0;
+    C.source_ram[0]=R(0x45);C.source_ram[1]=R(0xF5);C.source_ram[2]=R(0xF6);
+    for(int i=0;i<4;i++)C.source_ram[3+i]=R(0x14+i);
+    /* C96E runs inside the native update lock. NMI must process the real
+     * column packets while this transaction yields, as it does at boot. */
+    C.source_ram[7]=R(0x9A);P(0x9A,0);
+    for(int i=0;i<10;i++)C.source_stack[i]=R(0x100|((r.s-9+i)&255));
+    /* Drain the original pending queue before CFB1 reuses $0780, then load,
+     * publish, restore the mapper and resume this exact director entry. */
+    static const uint8_t chain[]={0x1B,0xFF,0xA5,0xC5,0x1B,0xFF,0x36,0xFF,0x6D,0xC9};
+    for(int i=0;i<10;i++)P(0x100|((r.s-9+i)&255),chain[i]);
+    C.source_pending=3;C.source_handoffs[C.anchor]++;
+    source_hooks();r.s=(uint8_t)(r.s-10);cyc_mod_set_regs(&r);return 1;
+}
+static int source_needed(const Player *p) {
+    return mm4_coop_independent() && !(R(0x2B)&0xC0) &&
+        (personal(p,0x348)!=R(0xF9) || R(0xFC));
+}
 static int before_director(uint16_t address) {
     (void)address;
+    if(C.source_pending==2 && !cyc_mod_isolated()) {
+        CycModRegs r={0};cyc_mod_regs(&r);if(r.s!=C.source_regs.s)return 0;
+        for(int i=0;i<10;i++)P(0x100|((r.s-9+i)&255),C.source_stack[i]);
+        P(0x45,C.source_ram[0]);P(0xF5,C.source_ram[1]);P(0xF6,C.source_ram[2]);
+        for(int i=0;i<4;i++)P(0x14+i,C.source_ram[3+i]);
+        P(0x9A,C.source_ram[7]);
+        cyc_mod_set_regs(&C.source_regs);C.source_pending=0;source_hooks();return 0;
+    }
     if(!s_on || !C.initialized || C.menu || A.active || W.active || C.scene_active || cyc_mod_isolated() ||
-       R(0x22)>=16 || R(0x19) || R(0x1A) || R(0x30)>=8)return 0;
+       R(0x22)>=16 || R(0x30)>=8)return 0;
     capture(&C.player[C.anchor]);
     if(C.waiting)for(int seat=0;seat<2;seat++)if((C.waiting&(1u<<seat)) && !partner_present(seat^1)){finish_wait();break;}
     int anchor=C.anchor,anchor_x=personal(&C.player[anchor],0x330)+256*personal(&C.player[anchor],0x348);
@@ -605,6 +665,7 @@ static int before_director(uint16_t address) {
     int anchor_vertical=vertical_intent(&C.player[anchor]);
     if(anchor_right || anchor_vertical) {
         if(wait_for_partner(anchor,anchor_right?1:personal(&C.player[anchor],0x378)>=0xE8?4:8))return 1;
+        if(source_needed(&C.player[anchor]))return source_begin(personal(&C.player[anchor],0x348));
         /* Admission now belongs to this real native body. Checking the
          * just-released peer again would put it back into waiting. */
         if(s_wait_both)return 0;
@@ -621,10 +682,13 @@ static int before_director(uint16_t address) {
     if(!right && !vertical_intent(p))return 0;
     if(wait_for_partner(seat,right?1:personal(p,0x378)>=0xE8?4:8))return 1;
     capture(&C.player[C.anchor]);C.anchor=C.current=(uint8_t)seat;project(p);
-    if(right && R(0x2E)!=R(0x2D)){center_camera();P(0x25,R(0xFC));}
     P(0x27,C.previous_x[seat]);P(0x28,C.previous_x[seat]>>8);
     if(!mm4_controls_art(R(0xA0)))C.failures++;P(0x18,255);
     P(0x14,A.pressed[seat]);P(0x16,C.raw[seat]&~0x30);P(0x15,0);P(0x17,0);
+    if(source_needed(p))return source_begin(personal(p,0x348));
+    if(right && R(0x2E)!=R(0x2D)) {
+        center_camera();P(0x25,R(0xFC));
+    }
     return 0;
 }
 static int after_horizontal_scroll(uint16_t address) {
@@ -728,7 +792,7 @@ void mm4_coop_input(uint8_t buttons[2]) {
     buttons[1]=0; /* Original pad-2 Select/B are native debug controls. */
 }
 void mm4_coop_end(void) {
-    if(!s_on || A.active)return;
+    if(!s_on || A.active || C.source_pending)return;
     /* Native inventory and stage select both use screen16. Only the
      * explicitly owned personal menu retains its live stage contexts. */
     if(C.initialized && !C.menu && R(0x22)>=16){C.initialized=0;C.scene_active=0;C.pending_pause=255;}
@@ -738,6 +802,7 @@ void mm4_coop_end(void) {
      * Advancing previous here loses a new press on an output-only lag frame. */
 }
 void mm4_coop_build(void) {
+    if(C.source_pending)return;
     memset(&C.build,0,sizeof C.build);
     if(!s_on || !C.initialized || C.menu || R(0x22)>=16)return;
     int seat=C.anchor^1,owner=C.current;
@@ -806,15 +871,18 @@ void mm4_coop_set(int enabled,int roster) {
     C.menu=C.menu_ready=C.menu_busy=0;
     nes_mod_set_function_hook_enabled("mm4.coop.menu-idle",s_on);
     for(int i=0;i<sizeof HOOKS/sizeof *HOOKS;i++)nes_mod_set_function_hook_enabled(HOOKS[i],s_on);
+    source_hooks();
     nes_mod_set_function_hook_enabled("mm4.coop.target-begin",s_on);nes_mod_set_function_hook_enabled("mm4.coop.target-end",s_on);
     nes_mod_set_local_only("MM4 personal co-op (unqualified netplay)",s_on);mm4_view_coop(s_on);
     mm4_coop_view_set(s_view);
 }
-static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4CE",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;C.wait_mode=(uint8_t)s_wait_both;memcpy(out,&C,sizeof C);return sizeof C;}
+static int get(uint8_t *out,int cap) {if(cap<sizeof C)return -1;memcpy(C.magic,"M4D1",4);C.enabled=(uint8_t)s_on;C.roster=(uint8_t)s_roster;C.wait_mode=(uint8_t)s_wait_both;memcpy(out,&C,sizeof C);return sizeof C;}
 static int valid(const uint8_t *in,int len) {
     if(!len)return !s_on;if(!in || len!=sizeof C)return 0;
     static Coop p;memcpy(&p,in,sizeof p);
-    if(memcmp(p.magic,"M4CE",4)||p.enabled!=s_on||p.roster!=s_roster||p.wait_mode!=s_wait_both||p.waiting>3||((!p.enabled||!p.wait_mode)&&p.waiting)||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.menu_ready>1||p.menu_busy>1||p.menu_user>1||(!p.menu && (p.menu_ready||p.menu_busy))||p.scene_active>2||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2||p.checkpoint>2||p.revive_pending>3)return 0;
+    if(memcmp(p.magic,"M4D1",4)||p.enabled!=s_on||p.roster!=s_roster||p.wait_mode!=s_wait_both||p.waiting>3||((!p.enabled||!p.wait_mode)&&p.waiting)||p.initialized>1||p.anchor>1||p.current>1||p.menu>1||p.pauser>1||p.menu_ready>1||p.menu_busy>1||p.menu_user>1||(!p.menu && (p.menu_ready||p.menu_busy))||p.scene_active>2||p.retry>1||p.player[0].dead>2||p.player[1].dead>2||p.waited[0]>1||p.waited[1]>1||p.withdrawn>2||p.checkpoint>2||p.revive_pending>3)return 0;
+    if(p.source_pending>3 || p.source_page>=48 || p.source_offset>=48 || p.source_nt ||
+       (p.source_pending && (p.source_regs.pc!=0xC96E || p.menu || p.scene_active)))return 0;
     if(p.initialized && (p.withdrawn&(1u<<p.anchor)))return 0;
     for(int seat=0;seat<2;seat++) {
         if(p.menu_pending[seat]&~143)return 0;
@@ -832,7 +900,7 @@ static int valid(const uint8_t *in,int len) {
     }
     return 1;
 }
-static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(&C,in,sizeof C);else mm4_coop_power();return 1;}
+static int set(const uint8_t *in,int len) {if(!valid(in,len))return 0;if(len)memcpy(&C,in,sizeof C);else mm4_coop_power();source_hooks();return 1;}
 static int target_get(uint8_t *out,int cap){if(cap<sizeof A)return -1;memcpy(A.magic,"M4AT",4);memcpy(out,&A,sizeof A);return sizeof A;}
 static int target_valid(const uint8_t *in,int n){Target p;if(!n)return !A.active;if(!in||n!=sizeof p)return 0;memcpy(&p,in,sizeof p);return !memcmp(p.magic,"M4AT",4)&&p.active<=1&&p.owner<2&&p.seat<2;}
 static int target_set(const uint8_t *in,int n){if(!target_valid(in,n))return 0;if(n)memcpy(&A,in,sizeof A);else memset(&A,0,sizeof A);return 1;}
@@ -840,6 +908,8 @@ static int warp_get(uint8_t *out,int cap){if(cap<sizeof W)return -1;memcpy(W.mag
 static int warp_valid(const uint8_t *in,int n){Warp p;if(!n)return !W.active;if(!in||n!=sizeof p)return 0;memcpy(&p,in,sizeof p);return !memcmp(p.magic,"M4WT",4)&&p.active<=2&&!p.reserved[0]&&!p.reserved[1];}
 static int warp_set(const uint8_t *in,int n){if(!warp_valid(in,n))return 0;if(n)memcpy(&W,in,sizeof W);else memset(&W,0,sizeof W);return 1;}
 void mm4_coop_register(void) {
+    nes_mod_register_function_entry_plugin("mm4.coop.source-start",0xC5A6,source_start);
+    nes_mod_register_function_entry_plugin("mm4.coop.source-loaded",0xC5C4,source_loaded);
     mm4_menu_register();nes_mod_register_function_entry_plugin("mm4.coop.menu-idle",0x96D7,menu_idle);
     addresses();nes_mod_register_function_entry_plugin(HOOKS[0],0x8000,controller);nes_mod_register_function_entry_plugin(HOOKS[1],0xC74D,after_controller);
     nes_mod_register_function_entry_plugin(HOOKS[2],0x8052,personal_end);nes_mod_register_function_entry_plugin(HOOKS[3],0x8003,world_begin);
@@ -861,9 +931,9 @@ void mm4_coop_register(void) {
     nes_mod_register_savestate_hook("mm4.coop-warp",warp_get,warp_set);nes_mod_register_savestate_validator("mm4.coop-warp",warp_valid);
 }
 int mm4_coop_json(char *out,int cap) {
-    return snprintf(out,cap,"\"coop\":{\"on\":%d,\"ready\":%u,\"anchor\":%u,\"menu\":%u,\"pauser\":%u,\"world\":%llu,\"updates\":[%llu,%llu],\"failed\":%llu,\"dead\":[%u,%u],\"retry\":%u,\"lives\":%u,\"inventory\":[%u,%u,%u,%d,%d,%d,%d,%d,%d,%u],\"wait\":[%u,%u],\"transport\":[%u,%u,%u,%u,%u],\"withdrawals\":[%llu,%llu],\"rejoins\":[%llu,%llu],\"players\":[[%d,%d,%d,%d,%d,%d],[%d,%d,%d,%d,%d,%d]]}",
+    return snprintf(out,cap,"\"coop\":{\"on\":%d,\"ready\":%u,\"anchor\":%u,\"menu\":%u,\"pauser\":%u,\"world\":%llu,\"updates\":[%llu,%llu],\"failed\":%llu,\"dead\":[%u,%u],\"retry\":%u,\"lives\":%u,\"inventory\":[%u,%u,%u,%d,%d,%d,%d,%d,%d,%u],\"source\":[%u,%u,%u,%llu,%llu],\"wait\":[%u,%u],\"transport\":[%u,%u,%u,%u,%u],\"withdrawals\":[%llu,%llu],\"rejoins\":[%llu,%llu],\"players\":[[%d,%d,%d,%d,%d,%d],[%d,%d,%d,%d,%d,%d]]}",
         s_on,C.initialized,C.anchor,C.menu,C.pauser,(unsigned long long)C.world_updates,(unsigned long long)C.updates[0],(unsigned long long)C.updates[1],(unsigned long long)C.failures,C.player[0].dead,C.player[1].dead,C.retry,R(0xA1),
-        C.menu_ready,C.menu_busy,C.current,mm4_coop_read(0,0x138),mm4_coop_read(1,0x138),mm4_coop_read(0,0xA0),mm4_coop_read(1,0xA0),mm4_coop_read(0,0xB0)&31,mm4_coop_read(1,0xB0)&31,R(0xA2),s_wait_both,C.waiting,C.withdrawn,C.teleport[0],C.teleport[1],C.select_hold[0],C.select_hold[1],(unsigned long long)C.withdrawals[0],(unsigned long long)C.withdrawals[1],(unsigned long long)C.rejoins[0],(unsigned long long)C.rejoins[1],
+        C.menu_ready,C.menu_busy,C.current,mm4_coop_read(0,0x138),mm4_coop_read(1,0x138),mm4_coop_read(0,0xA0),mm4_coop_read(1,0xA0),mm4_coop_read(0,0xB0)&31,mm4_coop_read(1,0xB0)&31,R(0xA2),C.source_pending,C.source_page,C.source_nt,(unsigned long long)C.source_handoffs[0],(unsigned long long)C.source_handoffs[1],s_wait_both,C.waiting,C.withdrawn,C.teleport[0],C.teleport[1],C.select_hold[0],C.select_hold[1],(unsigned long long)C.withdrawals[0],(unsigned long long)C.withdrawals[1],(unsigned long long)C.rejoins[0],(unsigned long long)C.rejoins[1],
         personal(&C.player[0],0x330),personal(&C.player[0],0x378),personal(&C.player[0],0xB0)&31,personal(&C.player[0],0x32),personal(&C.player[0],0x30),personal(&C.player[0],0x348),
         personal(&C.player[1],0x330),personal(&C.player[1],0x378),personal(&C.player[1],0xB0)&31,personal(&C.player[1],0x32),personal(&C.player[1],0x30),personal(&C.player[1],0x348));
 }

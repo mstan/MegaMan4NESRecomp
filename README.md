@@ -91,7 +91,15 @@ Either living player can lead the tested right-hand boss shutter. The stage dire
 python tools/qa_coop_exit.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/coop-exit
 ```
 
-This focused regression uses real Right input from the existing Bright Man checkpoint entry, with either player leading and the other idle. It checks the native boss intro, personal inventory, one world clock, interpreter agreement and a cold continuation during the actual shutter script. Alternate and distant exits retain their separate qualification requirements.
+This focused regression uses real Right input from the existing Bright Man checkpoint entry, with either player leading and the other idle. It checks the native boss intro, personal inventory, one world clock, interpreter agreement and a cold continuation during the actual shutter script.
+
+Distant independent-view exits refill the selected source page with the original native column loader before resuming the original room director. The refill drains pending VRAM writes, permits NMI publication and restores the caller's stack, registers, mapper and update lock. Disabling co-op during a pending refill retains its return guards, including after a current-build cold load.
+
+```text
+python tools/qa_coop_source.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/coop-source
+```
+
+The bounded route has the distant guest lead Bright's original page3-to4 exit, then the other player lead the authored page6-to7 ladder from a different source camera. Both keep personal health, ammo and equipment and fire native shots afterward. Checks cover the native scroll background, interpreter agreement and current-build state, first picture and PCM during the queue drain and both refills. A separate native near-exit comparison matches the horizontal nametable data for all127 scrolling frames and the ladder's destination nametables and background patterns.
 
 Either player can also lead native upward and downward ladder scrolling. Both bodies ride the original script on its real clock and retain personal HP, weapon and ammo. They share the authored ladder column during the scroll, then resume their own controls. The scroll's saved return context distinguishes its completion from nested tile-streaming calls.
 
@@ -122,7 +130,7 @@ The guest's airborne shield blocks supported native straight bullets in either d
 
 Independent split screen presents two native 256-by-240 panes; player-one and player-two views each retain one 256-by-240 pane. Select the view under Display in the runtime menu, or use `--coop-view shared|split|player1|player2`. Window resizing and aspect changes keep these grids intact. Returning to the shared view restores the selected aspect policy. Each pane has its player's native health and weapon meters, with a shared boss meter. Ordinary horizontal terrain is decoded from the native cartridge tables; the left eight pixels are revealed rather than blanked by the hardware edge mask.
 
-Native actor activation uses the union of the two view rectangles and excludes their empty gap. An authored enemy is not repeatedly constructed while its spawn remains visible; leaving and returning allows the original constructor to create it again. Both live player bodies, separate terrain, native actor identities, distant survivor control, native/interpreter agreement and current-build continuation have targeted coverage. Scripted and vertical scenes currently retain the source camera; distant transition qualification remains open.
+Native actor activation uses the union of the two view rectangles and excludes their empty gap. An authored enemy is not repeatedly constructed while its spawn remains visible; leaving and returning allows the original constructor to create it again. Both live player bodies, separate terrain, native actor identities, distant survivor control, native/interpreter agreement and current-build continuation have targeted coverage. Scripted and vertical scenes use the native source camera; the tested distant exits first refill that source with native terrain.
 
 ```text
 python tools/qa_views.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/views

@@ -43,7 +43,7 @@ static void panels_build(void) {
 
 static int begin(uint16_t address) {
     (void)address;
-    if(cyc_mod_isolated())return 0;
+    if(cyc_mod_isolated() || mm4_coop_source_pending())return 0;
     memset(&s_build, 0, sizeof s_build); memset(s_build.owners, 255, sizeof s_build.owners);
     mm4_wide_begin();
     mm4_coop_build();
@@ -216,7 +216,7 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
         return personal?inventory(out,W,H,native):0;
     }
     if(!mm4_coop_menu_active() && cyc_render_background(s_bg)) {
-        mm4_world_audit(s_bg);
+        if(!mm4_coop_source_pending())mm4_world_audit(s_bg);
         if(panels(out,W,H))return 1;
     }
     if (cyc_mod_peek(0x22) >= 16 || cyc_mod_peek(0x19) || cyc_mod_peek(0x1A)) return 0;

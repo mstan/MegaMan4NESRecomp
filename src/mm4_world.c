@@ -59,7 +59,11 @@ void mm4_world_audit(const uint32_t *bg) {
         R(0x300)!=1 || !(R(0xb0)&31) || (R(0x2b)&0xc0))return;
     int camera=(R(0xf9)<<8)|R(0xfc),compared=0,mismatch=0,edge_attributes=0;
     for(int y=0;y<240;y++) {
-        int delta=(cyc_render_line_scroll_x(y)-(camera&511)+256)&511;
+        /* A native checkpoint initializer can put an odd world page in
+         * nametable0. The game's live control shadow retains that PPU origin;
+         * world-page parity alone does not identify the displayed table. */
+        int source=((R(0xFF)&1)<<8)|R(0xFC);
+        int delta=(cyc_render_line_scroll_x(y)-source+256)&511;
         int actual=camera+delta-256,sy=cyc_render_line_scroll_y(y)%240;
         for(int x=0;x<256;x++) {
             int wx=actual+x;Mm4WorldTile t;

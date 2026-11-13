@@ -236,3 +236,16 @@ id = "mm4.coop.menu-idle"
 addr = 0x96D7
 length = 8
 crc32 = 0xF1D712F4
+
+[[mod_function_hook]]
+id = "mm4.coop.source-loaded"
+addr = 0xC5C4
+length = 8
+crc32 = 0x2D688556
+
+
+[[mod_function_hook]]
+id = "mm4.coop.source-start"
+addr = 0xC5A6
+length = 8
+crc32 = 0xB9BEFF31
