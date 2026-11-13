@@ -76,6 +76,8 @@ python tools/qa_coop_helpers.py --exe build/Release/MegaMan4Recomp.exe --rom "/p
 
 This bounded check uses native summon/boarding input, L/R dismount and returned Buster fire, then a separate one-unit fuel depletion while moving inside the water. Both ownership directions must dismount alive and retain the other player's fuel. Native/interpreter state, pictures and audio agree, including current-build first-picture/PCM continuation after switching and near depletion. Concurrent-form checks also cover one player returning to foot controls and firing while the other keeps piloting, with independent native body artwork and fuel clocks.
 
+Flash Stopper freezes the shared native world from either seat. Its original timer advances once per controller update even when both players equip it; simultaneous requests spend one activation cost and the second controller retains the original active-freeze Buster behavior. `tools/qa_coop_effects.py --exe ... --rom ... --root ... --qualify` verifies authored enemy freeze/resume, exact shared world behavior for either owner, personal costs, backend agreement and current-build first-picture/state/PCM continuation.
+
 Wire uses its original grapple controller for both players. A focused `--helper wire --qualify` check covers native Up+B attachment and ascent, Buster fire while hanging, Down detachment, personal energy, backend agreement and current-build first-picture/state/PCM continuation mid-grapple.
 
 Changing a presentation option in Mods retains live co-op bodies, inventories and pending wait-for-both positions when co-op remains selected. The catalog's synchronous reset/activation pass does not create a new team.

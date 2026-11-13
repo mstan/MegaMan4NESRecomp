@@ -42,6 +42,8 @@ typedef struct {
 } Coop;
 static Coop C;
 static int s_on,s_roster,s_scope,s_personal_bhv,s_collision,s_death_wait,s_view;
+/* Transient journal inside one controller update, never across a frame. */
+static int s_bright_ticked,s_bright_restore=-1;
 static uint16_t s_addr[PERSONAL_CAP],s_index[2048];
 static int s_count;
 static int s_wait_both;
@@ -194,7 +196,7 @@ static int target_end(uint16_t address) {
 static int world_field(int a) {
     if(a>=0x300 && a<0x5D0)return (a-0x300)%24>=5;
     return (a>=0x100 && a<0x110) || (a>=0x600 && a<0x610) || (a>=0x620 && a<0x630) ||
-        (a>=0x670 && a<0x6c0) || (a>=0x780 && a<0x800) || a==0x19 || a==0x1A || a==0xBF;
+        (a>=0x670 && a<0x6c0) || (a>=0x780 && a<0x800) || a==0x19 || a==0x1A || a==0xBF || a==0x13C || a==0x13D;
 }
 static void snapshot_ram(uint8_t out[2048]) { for(int a=0;a<2048;a++)out[a]=R(a); }
 static void merge_world(const uint8_t before[2048],const uint8_t after[2048]) {
@@ -222,6 +224,7 @@ static int hooks(int enable) {
             allowed|=!strcmp(h->id,"mm4.proto.shield") || !strcmp(h->id,"mm4.proto.skip-reflected");
             allowed|=!strcmp(h->id,"mm4.coop.personal-end");
             allowed|=!strcmp(h->id,"mm4.coop.marine-out");
+            allowed|=!strncmp(h->id,"mm4.coop.bright-",16);
             allowed|=!strcmp(h->id,"mm4.coop.dying") || !strcmp(h->id,"mm4.coop.pit") || !strcmp(h->id,"mm4.coop.death-music") || !strcmp(h->id,"mm4.coop.death-wait");
             if(h->enabled && !allowed)nes_mod_set_function_hook_enabled(h->id,0);
         }
@@ -267,6 +270,7 @@ static int private_step(int seat) {
     int owner=C.current;C.current=(uint8_t)seat;project(&C.player[seat]);center_camera();
     A.pressed[seat]=(uint8_t)(C.raw[seat]&~C.player[seat].previous&~0x30);
     P(0x14,A.pressed[seat]);P(0x16,C.raw[seat]&~0x30);P(0x15,0);P(0x17,0);
+    int bright_ticked=s_bright_ticked;
     s_scope=1;int enabled=hooks(1),ok=enabled;CycModRegs r;cyc_mod_regs(&r);
     P(0xf5,0x3c);P(0xf6,0x3d);if(ok)ok=cyc_mod_call(0xff37,&r);
     if(ok)ok=mm4_controls_art(R(0xa0));
@@ -297,6 +301,7 @@ static int private_step(int seat) {
     }
     if(enabled)hooks(0);s_scope=0;cyc_mod_isolate_end();C.current=(uint8_t)owner;
     mm4_helpers_commit(ok);
+    if(!ok){s_bright_ticked=bright_ticked;s_bright_restore=-1;}
     if(ok)merge_world(before,after);return ok;
 }
 static void initialize(void) {
@@ -389,6 +394,7 @@ static void select_tick(void) {
 }
 static int controller(uint16_t address) {
     (void)address;if(!s_on || cyc_mod_isolated())return 0;
+    s_bright_ticked=0;s_bright_restore=-1;
     C.waited[0]=C.waited[1]=0;
     if(C.menu && R(0x22)<16) {
         capture(&C.player[C.pauser]);C.current=C.anchor;project(&C.player[C.anchor]);C.menu=C.menu_ready=C.menu_busy=0;P(0x18,255);
@@ -463,6 +469,17 @@ static int personal_end(uint16_t address) {
     if(s_on && C.initialized && !C.menu && !cyc_mod_isolated() && R(0xEB)>=5 && R(0xEB)<24)
         if(!other_collision(C.anchor^1,R(0xEB)))C.failures++;
     return 0;
+}
+static int bright_tick_before(uint16_t address) {
+    (void)address;if(!s_on || !C.initialized || (cyc_mod_isolated() && !s_scope))return 0;
+    s_bright_restore=s_bright_ticked?(R(0x13C)|(R(0x13D)<<8)):-1;return 0;
+}
+static int bright_tick_after(uint16_t address) {
+    (void)address;if(!s_on || !C.initialized || (cyc_mod_isolated() && !s_scope))return 0;
+    /* Original init/cost, Buster and per-player flash still run. A second
+     * Bright controller cannot decrement the same shared freeze twice. */
+    if(s_bright_restore>=0){P(0x13C,s_bright_restore);P(0x13D,s_bright_restore>>8);}
+    s_bright_restore=-1;s_bright_ticked=1;return 0;
 }
 static int world_begin(uint16_t address) { (void)address;if(s_on && C.initialized && !cyc_mod_isolated())C.world_updates++;return 0; }
 static int marine_out(uint16_t address) {
@@ -887,6 +904,8 @@ void mm4_coop_set(int enabled,int roster) {
     s_on=on;s_roster=roles;
     nes_mod_set_function_hook_enabled("mm4.coop.menu-idle",s_on);
     nes_mod_set_function_hook_enabled("mm4.coop.marine-out",s_on);
+    nes_mod_set_function_hook_enabled("mm4.coop.bright-before",s_on);
+    nes_mod_set_function_hook_enabled("mm4.coop.bright-after",s_on);
     for(int i=0;i<sizeof HOOKS/sizeof *HOOKS;i++)nes_mod_set_function_hook_enabled(HOOKS[i],s_on);
     source_hooks();
     nes_mod_set_function_hook_enabled("mm4.coop.target-begin",s_on);nes_mod_set_function_hook_enabled("mm4.coop.target-end",s_on);
@@ -926,6 +945,8 @@ static int warp_valid(const uint8_t *in,int n){Warp p;if(!n)return !W.active;if(
 static int warp_set(const uint8_t *in,int n){if(!warp_valid(in,n))return 0;if(n)memcpy(&W,in,sizeof W);else memset(&W,0,sizeof W);return 1;}
 void mm4_coop_register(void) {
     nes_mod_register_function_entry_plugin("mm4.coop.marine-out",0x8530,marine_out);
+    nes_mod_register_function_entry_plugin("mm4.coop.bright-before",0x9195,bright_tick_before);
+    nes_mod_register_function_entry_plugin("mm4.coop.bright-after",0x91A6,bright_tick_after);
     nes_mod_register_function_entry_plugin("mm4.coop.source-start",0xC5A6,source_start);
     nes_mod_register_function_entry_plugin("mm4.coop.source-loaded",0xC5C4,source_loaded);
     mm4_menu_register();nes_mod_register_function_entry_plugin("mm4.coop.menu-idle",0x96D7,menu_idle);

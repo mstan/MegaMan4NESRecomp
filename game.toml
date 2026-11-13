@@ -255,3 +255,16 @@ id = "mm4.coop.marine-out"
 addr = 0x8530
 length = 8
 crc32 = 0xF353C5F1
+
+[[mod_function_hook]]
+id = "mm4.coop.bright-before"
+addr = 0x9195
+length = 8
+crc32 = 0x6A533CF4
+
+[[mod_function_hook]]
+id = "mm4.coop.bright-after"
+addr = 0x91A6
+length = 8
+crc32 = 0x333F1D94
+
