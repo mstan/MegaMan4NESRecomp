@@ -261,7 +261,7 @@ static int private_step(int seat) {
         C.teleport[seat]=TELE_HIDDEN;set_personal(&C.player[seat],0x300,0);return 1;
     }
     int state=personal(&C.player[seat],0x30);
-    if((!C.teleport[seat] && (state>6 || state==5)) || R(0x30)>=8)return 1;
+    if((!C.teleport[seat] && state>6) || R(0x30)>=8)return 1;
     uint8_t before[2048],after[2048];snapshot_ram(before);
     if(!cyc_mod_isolate_begin())return 0;
     int owner=C.current;C.current=(uint8_t)seat;project(&C.player[seat]);center_camera();

@@ -76,6 +76,8 @@ python tools/qa_coop_helpers.py --exe build/Release/MegaMan4Recomp.exe --rom "/p
 
 This bounded check uses native summon/boarding input, L/R dismount and returned Buster fire, then a separate one-unit fuel depletion while moving inside the water. Both ownership directions must dismount alive and retain the other player's fuel. Native/interpreter state, pictures and audio agree, including current-build first-picture/PCM continuation after switching and near depletion. Concurrent-form checks also cover one player returning to foot controls and firing while the other keeps piloting, with independent native body artwork and fuel clocks.
 
+Wire uses its original grapple controller for both players. A focused `--helper wire --qualify` check covers native Up+B attachment and ascent, Buster fire while hanging, Down detachment, personal energy, backend agreement and current-build first-picture/state/PCM continuation mid-grapple.
+
 Changing a presentation option in Mods retains live co-op bodies, inventories and pending wait-for-both positions when co-op remains selected. The catalog's synchronous reset/activation pass does not create a new team.
 
 Split and individual views give each player a usable native inventory page with their own cursor, health, ammo, equipment and character portrait. Either living player can pause; only the pauser can resume, using A or Start on an equipment row. The other player can choose equipment without resuming. Lives and E-tanks stay shared. Simultaneous E-tank requests use player order and the original refill routine, with one tank spent for one recipient. Both equipment choices are retained when they arrive on the pauser's closing tick. Shared view retains the original single-page inventory.

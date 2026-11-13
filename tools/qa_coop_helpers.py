@@ -1,4 +1,4 @@
-"""Native Coil/Jet summon/contact in both ownership directions.
+"""Native Coil/Jet/Marine/Wire controls in both ownership directions.
 
 Uses the normal reset route, then explicit body/energy prerequisites. Real
 native helper contact must spring/carry either rider, spending owner energy.
@@ -8,7 +8,7 @@ from pathlib import Path
 import argparse,json,os,subprocess,sys,shutil,wave,hashlib
 p=argparse.ArgumentParser()
 for key in ['exe','rom','root']:p.add_argument('--'+key,required=True)
-p.add_argument('--helper',choices=['coil','jet','marine'],default='coil')
+p.add_argument('--helper',choices=['coil','jet','marine','wire'],default='coil')
 p.add_argument('--qualify',action='store_true');a=p.parse_args()
 r=Path(__file__).parent;q=Path(a.root);q.mkdir(parents=True,exist_ok=True)
 sys.path.insert(0,str(r));import qa_route
@@ -37,6 +37,27 @@ def run(name,end,lines,load=None,pokes=(),interp=False,saves=()):
 boot=q/'boot/end.cycstate'
 if not boot.is_file():
  _,lines=qa_route.expand(r.parent/'tests/routes/coop-gallery.route');run('boot',2501,[x for x in lines if int(x.split()[0])<=2200])
+if a.helper=='wire':
+ for weapon in [5]:
+  for owner in [0,1]:
+   other=owner^1; setup={0x300:1,0xB0:0x9C,0x3C:127,0xA0:0,0x330:128,0x348:0,0x378:148,0x390:0,0x30:0,0x3D8:0,0x3F0:0,0x3E:148,0x3F:0,0x301:0,0x302:0,0x303:0,0x304:0}
+   pokes=[(2501,s,z,v)for s in [0,1]for z,v in setup.items()]+[(2501,s,z,0)for s in [0,1]for z in range(0xB1,0xBE)]
+   pokes +=[(2501,owner,0xB0+weapon,0x9C),(2501,other,0x330,64)]
+   lines=['2501 HOLD 0305-0317 00',f'2503 X{owner+1}:R',f'2504 X{owner+1}:-',f'2560 {owner+1}:UP+B',f'2561 {owner+1}:UP',f'2720 {owner+1}:UP+B',f'2721 {owner+1}:UP',f'2800 {owner+1}:DOWN',f'2801 {owner+1}:-']
+   d,v,b=run(f'weapon{weapon}-owner{owner}',2861,lines,boot,pokes,saves=(2560,2600,2650,2720,2800))
+
+   checks[f'wire-owner{owner}-real-grapple-rise']=personal(d/'at2600.cycstate',owner,0x30)==5 and personal(d/'at2600.cycstate',owner,0x378)<140
+   checks[f'wire-owner{owner}-native-hanging-Buster']=personal(d/'at2720.cycstate',owner,0x301)==2
+   checks[f'wire-owner{owner}-native-detach-and-personal-cost']=b[owner]['state']==0 and b[owner]['y']==180 and b[owner]['ammo'][4]==26 and b[other]['ammo'][4]==0 and not v['coop']['failed']
+   if a.qualify:
+    i,_,_=run(f'wire-owner{owner}-interp',2861,lines,boot,pokes,True,(2560,2600,2650,2720,2800))
+    c,_,_=run(f'wire-owner{owner}-cold',2861,lines,d/'at2650.cycstate')
+    checks[f'wire-owner{owner}-backend']=all((d/f).read_bytes()==(i/f).read_bytes()for f in['frames.hash','end.cycstate','audio.wav','present.png'])
+    full=qa_route.load_hashes(d/'frames.hash');tail=qa_route.load_hashes(c/'frames.hash');checks[f'wire-owner{owner}-cold-hash']=len(tail)==210 and tail=={f:h for f,h in full.items()if f>2650}
+    checks[f'wire-owner{owner}-cold-firstPNG-state']=all((d/f).read_bytes()==(c/f).read_bytes()for f in['end.cycstate','present.png','present_02651.png'])
+    with wave.open(str(d/'audio.wav'))as x,wave.open(str(c/'audio.wav'))as y:pcm=x.readframes(x.getnframes());cold=y.readframes(y.getnframes())
+    checks[f'wire-owner{owner}-cold-pcm']=bool(cold)and pcm.endswith(cold);record()
+ sys.exit(not all(checks.values()))
 if a.helper=='marine':
  for owner in [0,1]:
   other=owner^1;tag=f'marine-owner{owner}'
