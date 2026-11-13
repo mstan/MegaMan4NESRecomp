@@ -217,7 +217,9 @@ static int target_end(uint16_t address) {
 static int world_field(int a) {
     if(a>=0x300 && a<0x5D0)return (a-0x300)%24>=5;
     return (a>=0x100 && a<0x110) || (a>=0x600 && a<0x610) || (a>=0x620 && a<0x630) ||
-        (a>=0x670 && a<0x6c0) || (a>=0x780 && a<0x800) || a==0x19 || a==0x1A || a==0xBF || a==0x13C || a==0x13D;
+        (a>=0x670 && a<0x6c0) || (a>=0x780 && a<0x800) || a==0x19 || a==0x1A || a==0xBF ||
+        /* Rain's native DF5F advances these on the one shared clock. */
+        a==0x13A || a==0x13B || a==0x145 || a==0x13C || a==0x13D;
 }
 static void snapshot_ram(uint8_t out[2048]) { for(int a=0;a<2048;a++)out[a]=R(a); }
 static void merge_world(const uint8_t before[2048],const uint8_t after[2048]) {

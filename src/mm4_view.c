@@ -18,6 +18,7 @@ typedef struct {
     int16_t left[2];
     uint8_t tiles[2][30][33],palettes[2][30][33],present[2][30][33];
     Mm4ProtoBody body;
+    uint8_t rain_colors[4];
 } ViewFrame;
 static ViewFrame s_build, s_frame;
 static int s_enabled,s_wide,s_coop,s_no_flicker,s_capture_policy=-1,s_panel_drawing;
@@ -63,6 +64,20 @@ static int part(uint16_t address) {
 static int dma(uint16_t address) {
     (void)address;
     if(cyc_mod_isolated())return 0;
+    /* DF5F overwrites OAM0..29 after actor ownership was captured. Identify
+     * its exact native packet, including the final zero-timer frame. */
+    int progress=cyc_mod_peek(0x13B),phase=progress-4;
+    int rain=progress>=4 && progress<=240 && !(progress&3) && cyc_mod_peek(0x145)<16;
+    for(int slot=0;slot<30 && rain;slot++)rain=
+        cyc_mod_peek(0x200+slot*4)==(uint8_t)(mm4_cart_prg(0x3E,0xDFBE+slot*2)+phase) &&
+        cyc_mod_peek(0x201+slot*4)==0x99 && !cyc_mod_peek(0x202+slot*4) &&
+        cyc_mod_peek(0x203+slot*4)==(uint8_t)(mm4_cart_prg(0x3E,0xDFBF+slot*2)-phase);
+    if(rain) {
+        int owner=-1;
+        if(mm4_coop_enabled())for(int seat=0;seat<2;seat++)if(mm4_coop_read(seat,0xA0)==4){owner=seat;break;}
+        for(int i=0;i<4;i++)s_build.rain_colors[i]=(uint8_t)((owner<0?cyc_mod_peek(0x610+i):mm4_coop_read(owner,(uint16_t)(0x610+i)))&63);
+        for(int slot=0;slot<30;slot++)s_build.owners[slot]=254;
+    }
     memcpy(&s_frame, &s_build, sizeof s_frame);
     mm4_wide_latch();
     mm4_coop_latch();
@@ -154,7 +169,7 @@ int mm4_view_native_body_pixel(const Mm4ProtoBody *b,int origin,int x,int y) {
     return x<left || x>=left+16 || y<top || y>=top+14;
 }
 void mm4_view_draw_character(uint32_t *out,int W,int origin,const Mm4ProtoBody *b) {character_body(out,W,origin,b);}
-static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oam,const Mm4ProtoBody *body) {
+static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oam,const Mm4ProtoBody *body,int mask_origin) {
     const uint8_t *o = oam + slot * 4;
     int top = o[0] + 1, height = cyc_render_line_sprite16(top < 240 ? top : 239) ? 16 : 8;
     for (int y = 0; y < height; ++y) {
@@ -163,17 +178,40 @@ static void sprite(uint32_t *out, int W, int origin, int slot, const uint8_t *oa
         int row = (o[2] & 128) ? height - y - 1 : y;
         uint16_t a = height == 16 ? (uint16_t)((o[1] & 1) * 4096 + ((o[1] & 254) + row / 8) * 16 + row % 8) :
             (uint16_t)(cyc_render_line_sprite_table(py) + o[1] * 16 + row);
-        int lo = cyc_render_chr(a), hi = cyc_render_chr(a + 8);
+        int rain=s_frame.owners[slot]==254;
+        int lo = rain?mm4_controls_pattern(4,a):cyc_render_chr(a), hi = rain?mm4_controls_pattern(4,a+8):cyc_render_chr(a + 8);
         for (int x = 0; x < 8; ++x) {
             int px = o[3] + x, bit = (o[2] & 64) ? x : 7 - x;
             int v = ((lo >> bit) & 1) | (((hi >> bit) & 1) << 1);
-            if (!v || origin + px >= W || (px < 8 && !(cyc_render_line_mask(py) & 4))) continue;
+            if (!v || origin + px < 0 || origin + px >= W || (origin+px>=mask_origin && origin+px<mask_origin+8 && !(cyc_render_line_mask(py) & 4))) continue;
             if(body && !mm4_view_native_body_pixel(body,origin,origin+px,py))continue;
             int at = py * W + origin + px;
             if (s_claimed[at]) continue;
             s_claimed[at] = 1;
-            if (!(o[2] & 32) || !s_opaque[at]) out[at] = cyc_render_color(16 + (o[2] & 3) * 4 + v);
+            if (!(o[2] & 32) || !s_opaque[at]) out[at] = rain?cyc_render_color_value(s_frame.rain_colors[v]):cyc_render_color(16 + (o[2] & 3) * 4 + v);
         }
+    }
+}
+static void sprite_limits(const uint8_t *oam) {
+    uint8_t counts[240]={0};memset(s_allowed,0,sizeof s_allowed);
+    int complete=s_no_flicker || mm4_coop_independent();
+    for(int slot=0;slot<64;slot++) {
+        int top=oam[slot*4]+1,height=cyc_render_line_sprite16(top<240?top:239)?16:8;
+        for(int y=top;y<top+height && y<240;y++)s_allowed[slot][y]=(uint8_t)(complete || counts[y]++<8);
+    }
+}
+static void rain_draw(uint32_t *out,int width,int origin) {
+    if(s_frame.owners[0]!=254)return;
+    /* Rain has the native packet's first OAM priority. Draw it after the
+     * complete player artwork, then retain the presentation HUD overlay. */
+    memset(s_claimed,0,(size_t)width*240);
+    const uint8_t *oam=cyc_render_oam();
+    for(int slot=0;slot<30;slot++)sprite(out,width,origin,slot,oam,NULL,origin);
+    if(width>256) {
+        /* Repeat the original rain in adaptive margins without adding any
+         * pixels to the preserved original viewport. */
+        for(int y=0;y<240;y++)for(int x=origin;x<origin+256;x++)if(x>=0 && x<width)s_claimed[y*width+x]=1;
+        for(int shift=-256;shift<=256;shift+=512)for(int slot=0;slot<30;slot++)sprite(out,width,origin+shift,slot,oam,NULL,origin);
     }
 }
 static void panel_scene(uint32_t *out,int seat) {
@@ -192,6 +230,7 @@ static void panel_scene(uint32_t *out,int seat) {
     int origin=mm4_wide_camera()-left;
     for(int rank=1;rank<=24;rank++)mm4_wide_draw(out,256,origin,s_opaque,s_claimed,rank);
     mm4_coop_draw(out,256,origin,s_opaque,s_claimed);
+    rain_draw(out,256,0);
     mm4_hud_draw(out,256,240,seat);s_panel_drawing=0;
 }
 static int panels(uint32_t *out,int width,int height) {
@@ -210,6 +249,7 @@ static int panels(uint32_t *out,int width,int height) {
 }
 static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *native, void *ctx) {
     (void)ctx; (void)native_x0;
+    sprite_limits(cyc_render_oam());
     if(cyc_mod_peek(0x22)==16){
         if(mm4_menu_draw(out,W,H))return 1;
         int personal=s_coop?mm4_coop_menu_active():cyc_mod_peek(0x30)<=4;
@@ -236,12 +276,8 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
     for (int y = 0; y < H; ++y) for (int x = 0; x < 256; ++x)
         if (origin+x>=0 && origin+x<W) s_opaque[y*W+origin+x]=native_opaque[y*256+x];
     const uint8_t *oam = cyc_render_oam();
-    uint8_t counts[240] = {0};
-    memset(s_allowed, 0, sizeof s_allowed);
     int first = 64;
     for (int slot = 0; slot < 64; ++slot) {
-        int top = oam[slot * 4] + 1, height = cyc_render_line_sprite16(top < 240 ? top : 239) ? 16 : 8;
-        for (int y = top; y < top + height && y < 240; ++y) s_allowed[slot][y] = s_no_flicker || counts[y]++ < 8;
         if (s_frame.owners[slot] == 0 && slot < first) first = slot;
     }
     cyc_render_set_native_origin(origin);
@@ -251,17 +287,19 @@ static int render(uint32_t *out, int W, int H, int native_x0, const uint32_t *na
     int drawn_rank=0;
     for (int slot = 0; slot < 64; ++slot) {
         int owner = s_frame.owners[slot];
+        if(owner==254)continue;
         int rank=mm4_wide_rank(owner);
         if(rank!=255)while(drawn_rank<rank)mm4_wide_draw(out,W,origin,s_opaque,s_claimed,++drawn_rank);
         if(s_no_flicker && owner<24 && rank!=255)continue;
         if (replace && owner == 0) {
             if (slot == first) character_body(out, W, origin, &s_frame.body);
-            if(s_frame.body.state==4 && s_frame.body.weapon==3)sprite(out,W,origin,slot,oam,&s_frame.body);
+            if(s_frame.body.state==4 && s_frame.body.weapon==3)sprite(out,W,origin,slot,oam,&s_frame.body,origin);
         }
-        else if(!mm4_hud_native_meter(oam+slot*4))sprite(out, W, origin, slot, oam,NULL);
+        else if(!mm4_hud_native_meter(oam+slot*4))sprite(out, W, origin, slot, oam,NULL,origin);
     }
     while(drawn_rank<24)mm4_wide_draw(out,W,origin,s_opaque,s_claimed,++drawn_rank);
     mm4_coop_draw(out,W,origin,s_opaque,s_claimed);
+    rain_draw(out,W,origin);
     mm4_hud_draw(out,W,H,-1);
     cyc_render_set_native_origin(origin); return 1;
 }
@@ -286,7 +324,7 @@ void mm4_view_coop(int enabled) {s_coop=enabled!=0;refresh();}
 void mm4_view_no_flicker(int enabled) {s_no_flicker=enabled!=0;refresh();}
 static int get(uint8_t *out, int cap) {
     if (cap < sizeof s_frame + sizeof s_build) return -1;
-    memcpy(s_build.magic, "MV02", 4); memcpy(s_frame.magic, "MV02", 4);
+    memcpy(s_build.magic, "MV03", 4); memcpy(s_frame.magic, "MV03", 4);
     memcpy(out, &s_build, sizeof s_build); memcpy(out + sizeof s_build, &s_frame, sizeof s_frame);
     return sizeof s_build + sizeof s_frame;
 }
@@ -296,9 +334,15 @@ static int valid(const uint8_t *in, int len) {
     ViewFrame frames[2]; memcpy(frames, in, sizeof frames);
     for (int i = 0; i < 2; ++i) {
         const Mm4ProtoBody *b = &frames[i].body;
-        if (memcmp(frames[i].magic, "MV02", 4) || frames[i].valid > 1 || frames[i].panels>1 || frames[i].native_scene>1 || b->pose >= CYC_PROTO_POSE_COUNT ||
+        if (memcmp(frames[i].magic, "MV03", 4) || frames[i].valid > 1 || frames[i].panels>1 || frames[i].native_scene>1 || b->pose >= CYC_PROTO_POSE_COUNT ||
             b->active > 1 || b->right > 1 || b->flipped > 1 || b->behind > 1 || b->weapon > 13) return 0;
-        for (int j = 0; j < 64; ++j) if (frames[i].owners[j] != 255 && frames[i].owners[j] >= 24) return 0;
+        int rain=frames[i].owners[0]==254;
+        for (int j = 0; j < 64; ++j) {
+            int owner=frames[i].owners[j];
+            if(owner==254){if(!rain || j>=30)return 0;}
+            else if((rain && j<30) || (owner!=255 && owner>=24))return 0;
+        }
+        for(int j=0;j<4;j++)if(frames[i].rain_colors[j]>63)return 0;
         for(int s=0;s<2;s++)for(int y=0;y<30;y++)for(int x=0;x<33;x++)if(frames[i].palettes[s][y][x]>3 || frames[i].present[s][y][x]>1)return 0;
     }
     return 1;
