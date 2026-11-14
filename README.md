@@ -2,7 +2,7 @@
 
 NESRecomp cycle-backend project for the original USA cartridge. Supply your own ROM; the project and releases contain no cartridge data.
 
-Development takes place on the feature branch. Native gameplay is the baseline for the character, co-op, controls and adaptive widescreen implementation.
+Version 0.2.0 adds optional Proto Man, local and online co-op, quick weapon switching and adaptive widescreen while retaining the original game mechanics. Fresh profiles enable Fit to screen, No sprite flicker, Reduce slowdown, quick weapon switching and VSync. Saved choices remain in effect.
 
 Configure with CMake 3.20+, Python 3.11+, and a C/C++ toolchain:
 
@@ -64,19 +64,19 @@ Airborne firing keeps the open-jump helmet and boot baseline, with the Buster le
 python tools/qa_proto.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/proto
 ```
 
-The native inventory supplies Proto Man's life portrait and character preview on its original pixel grid. Rush and adapter previews retain their native graphics. This development slice covers solo play; multiplayer and full-stage qualification are still in progress.
+The native inventory supplies Proto Man's life portrait and character preview on its original pixel grid. Rush and adapter previews retain their native graphics.
 
 ## Adaptive widescreen
 
-Fresh profiles enable Fit to screen. The aspect option also offers 16:9, 21:9 and 32:9. Horizontal rooms extend their authored terrain and native actors into the margins, with native slot identities, animation and collision. Original viewport pixels and the inventory's layout remain intact. Vertical scenes and transitions still need full-stage qualification.
+Fresh profiles enable Fit to screen. The aspect option also offers 16:9, 21:9 and 32:9. Horizontal rooms extend their authored terrain and native actors into the margins, with native slot identities, animation and collision. Original viewport pixels and the inventory's layout remain intact. Vertical rooms and scripted transitions retain their native camera and layout.
 
 ```text
 python tools/qa_wide.py --exe build/Release/MegaMan4Recomp.exe --rom "/path/to/Mega Man 4 (USA).nes" --out qa/wide
 ```
 
-The check compares native and interpreter execution, decodes terrain against the live viewport, checks native margin activation, and cold-loads a moving scene with a different capture schedule. It records the original game's brief right-edge palette-attribute streaming differences separately. Online play remains unavailable while the widened world and character implementation are unqualified for netplay.
+The check compares native and interpreter execution, decodes terrain against the live viewport, checks native margin activation, and cold-loads a moving scene with a different capture schedule. It records the original game's brief right-edge palette-attribute streaming differences separately. Enable Co-op before creating an online room. Peers agree on a fixed gameplay profile before the match; leaving the session restores offline preferences.
 
-## Co-op development
+## Co-op
 
 Enable the optional Co-op package in Mods, or use `--coop on` for development checks. It provides separate native player, weapon and helper contexts, guest sprite rendering, and either player's native inventory with input assigned to its owner. `--coop-roster protoman-megaman` reverses the default Mega Man / Proto Man order. Personal actors are slots 0–4; native world actors in slots 5–23 remain shared. Guest weapon artwork is read from cartridge packets without private CHR-RAM uploads.
 
@@ -156,11 +156,13 @@ The focused check uses an actual pit death, then real slide/Right input through 
 
 Stage select retains its original picture after either character's finisher. Personal inventory artwork applies only to the actual inventory. The completed stage releases its player contexts before stage selection and reinitializes both players on the next native arrival. Both controllers can choose a stage after a partner's finisher; their matched inputs reach identical runtime state, picture and PCM. The native inventory's owner input and original solo artwork have separate regression coverage.
 
-Targeted checks cover both death orders, actual lethal projectile contacts with sixteen native particles, pits including recoil, survivor movement, both players firing after retry, native/interpreter agreement, and current-build first-picture/PCM continuation. The previous native boss-finisher/victory route remains unchanged. Distant horizontal camera handoff now retains the living native hero after either player dies. Checkpoint/rejoin variants and complete stage coverage remain open.
+Targeted checks cover both death orders, actual lethal projectile contacts with sixteen native particles, pits including recoil, survivor movement, both players firing after retry, native/interpreter agreement, and current-build first-picture/PCM continuation. The previous native boss-finisher/victory route remains unchanged. Distant horizontal camera handoff now retains the living native hero after either player dies.
 
 The guest's airborne shield blocks supported native straight bullets in either direction. Reflections use the original Buster constructor and native overlap/damage routines, including when Rain Flush is selected. A constructor packet is prepared before the guest collision scope; the original native contact check decides whether to consume it. Reflected shots stay separate from the selected weapon's collision path. Rear hits, firing and the normal-stat reskin retain native damage and recoil. Targeted checks include a real reflected kill, both living native heroes, interpreter agreement, and current-build continuation with a reflected shot in flight. The boss-finisher and next-stage checks also pass with this change.
 
 Independent split screen presents two native 256-by-240 panes; player-one and player-two views each retain one 256-by-240 pane. Select the view under Display in the runtime menu, or use `--coop-view shared|split|player1|player2`. Window resizing and aspect changes keep these grids intact. Returning to the shared view restores the selected aspect policy. Each pane has its player's native health and weapon meters, with a shared boss meter. Ordinary horizontal terrain is decoded from the native cartridge tables; the left eight pixels are revealed rather than blanked by the hardware edge mask.
+
+In shared view, the camera follows the living team in ordinary horizontal rooms. Movement stops at the shared separation limit so both players stay visible; moving inward lets the team regroup and advance. A survivor remains free to move after the partner leaves. Native vertical and scripted room transitions retain their own handling.
 
 Native actor activation uses the union of the two view rectangles and excludes their empty gap. An authored enemy is not repeatedly constructed while its spawn remains visible; leaving and returning allows the original constructor to create it again. Both live player bodies, separate terrain, native actor identities, distant survivor control, native/interpreter agreement and current-build continuation have targeted coverage. Scripted and vertical scenes use the native source camera; the tested distant exits first refill that source with native terrain.
 
@@ -178,7 +180,7 @@ python tools/qa_coop_withdraw.py --exe build/Release/MegaMan4Recomp.exe --rom "/
 
 This targeted check exercises each player, last-player protection, retained equipment, native beam scripts, native/interpreter agreement, and current-build state/picture/PCM continuation during departure and return. Its stationary room suppresses enemies and supplies explicit HP/ammo prerequisites.
 
-Native enemy AI targets the nearest living player, including that player's consumed input. Either player can enter and return from native refight portals; original map and boss-intro scripts carry both players while preserving personal equipment. Lifecycle variants, final online UI/lobby/reconnect and release qualification remain in development. The online settings adapter seals the gameplay profile and restores offline runtime and catalog preferences on exit; final release qualification remains separate.
+Native enemy AI targets the nearest living player, including that player's consumed input. Either player can enter and return from native refight portals; original map and boss-intro scripts carry both players while preserving personal equipment. The online settings adapter seals the gameplay profile and restores offline runtime and catalog preferences on exit.
 
 Flash Stopper and Rain Flush share one native world clock while retaining personal costs. Rain can damage frozen enemies. A pending freeze expires even if its caster withdraws or co-op is disabled. Current-build snapshots retain the effect clock across native controller waits.
 
