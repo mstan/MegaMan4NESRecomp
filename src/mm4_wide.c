@@ -40,10 +40,10 @@ static void seen_stage(void) {
 }
 
 static int room_geometry(int width, int *camera, int *left, int *lo, int *hi) {
-    int independent=mm4_coop_independent();
+    int independent=mm4_coop_independent(),shared=mm4_coop_shared_camera();
     /* $19/$1A queue the native VRAM streams consumed at C330/C334. They
      * pulse during ordinary scrolling and do not invalidate room geometry. */
-    if ((!s_on && !independent) || (!independent && width <= 256) || width > CYC_VIDEO_MAX_WIDTH || R(0x22) >= 16 ||
+    if ((!s_on && !independent && !shared) || (!independent && !shared && width <= 256) || width > CYC_VIDEO_MAX_WIDTH || R(0x22) >= 16 ||
         (R(0x2B)&0xC0) || R(0x30)==10) return 0;
     int page = R(0xF9), start = page - R(0x2E);
     if (start < 0 || R(0x2D) > 15) return 0;
@@ -52,6 +52,7 @@ static int room_geometry(int width, int *camera, int *left, int *lo, int *hi) {
     *left = *camera - (width - 256) / 2;
     if (*left < *lo) *left = *lo;
     if (*hi - *lo >= width && *left + width > *hi) *left = *hi - width;
+    *left=mm4_coop_shared_left(*left,width,*lo,*hi);
     return 1;
 }
 static int geometry(int width, int *camera, int *left, int *lo, int *hi) {
@@ -187,7 +188,8 @@ static int clear(uint16_t address) {
     (void)address;if(!cyc_mod_isolated()){memset(S.seen,0,sizeof S.seen);S.seen_stage=255;}return 0;
 }
 int mm4_wide_background(uint32_t *out,int width,int height,const uint32_t *native,uint8_t *opaque,int *origin) {
-    if (!s_on || !S.frame.room_valid || width<=256 || width>CYC_VIDEO_MAX_WIDTH || height!=240 || !native) return 0;
+    int shared=mm4_coop_shared_camera();
+    if ((!s_on && !shared) || !S.frame.room_valid || (!shared && width<=256) || width>CYC_VIDEO_MAX_WIDTH || height!=240 || !native) return 0;
     int camera=S.frame.camera,left=S.frame.left;
     const uint8_t *native_opaque=cyc_frame_bg_opaque();
     if (width!=S.frame.width) { int lo,hi;if (!room_geometry(width,&camera,&left,&lo,&hi)) return 0; }
@@ -234,7 +236,8 @@ int mm4_wide_background(uint32_t *out,int width,int height,const uint32_t *nativ
 int mm4_wide_rank(int owner) { return owner>=0 && owner<24 && S.frame.valid?S.frame.rank[owner]:255; }
 void mm4_wide_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint8_t *claimed,int rank) {
     int complete=s_no_flicker || mm4_coop_independent();
-    if ((!s_on && !complete) || !S.frame.valid || (!complete && width<=256)) return;
+    int shared=mm4_coop_shared_camera();
+    if ((!s_on && !complete && !shared) || !S.frame.valid || (!complete && !shared && width<=256)) return;
     /* This frame's origin is explicit. cyc_render_native_origin reports the
      * previously composed frame until the current compositor returns. */
     int left=S.frame.camera-origin;
@@ -261,7 +264,7 @@ void mm4_wide_draw(uint32_t *out,int width,int origin,const uint8_t *opaque,uint
     }
 }
 void mm4_wide_views_changed(void) {
-    int active=s_on || mm4_coop_independent();
+    int active=s_on || mm4_coop_enabled();
     nes_mod_set_function_hook_enabled("mm4.wide.actor",active || s_no_flicker);nes_mod_set_function_hook_enabled("mm4.wide.spawn",active);
     nes_mod_set_function_hook_enabled("mm4.wide.authored",active);nes_mod_set_function_hook_enabled("mm4.wide.born",active);nes_mod_set_function_hook_enabled("mm4.wide.clear",active);
 }

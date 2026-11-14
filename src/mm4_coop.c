@@ -5,6 +5,7 @@
 #include "mm4_wide.h"
 #include "mm4_helpers.h"
 #include "mm4_menu.h"
+#include "mm4_net.h"
 
 #include "cyc_mod.h"
 #include "cyc_ring.h"
@@ -157,6 +158,33 @@ int mm4_coop_write(int seat,uint16_t a,uint8_t value) {
     C.player[seat].ram[s_index[a]-1]=value;
     if(seat==C.current && (!A.active || target_field(a)))P(a,value);
     return 1;
+}
+int mm4_coop_shared_camera(void) {
+    return s_on && !s_view && C.initialized && !C.menu && C.stage==R(0x22) && R(0x22)<16 &&
+        !(R(0x2B)&0xC0) && !mm4_coop_native_scene() && !A.active && !W.active &&
+        mm4_coop_live(0) && mm4_coop_live(1) && !C.teleport[0] && !C.teleport[1] &&
+        (mm4_coop_read(0,0xB0)&31) && (mm4_coop_read(1,0xB0)&31);
+}
+int mm4_coop_shared_left(int fallback,int width,int lo,int hi) {
+    if(!mm4_coop_shared_camera())return fallback;
+    int x0=mm4_coop_read(0,0x330)+256*mm4_coop_read(0,0x348);
+    int x1=mm4_coop_read(1,0x330)+256*mm4_coop_read(1,0x348);
+    int left=(x0+x1)/2-width/2;
+    if(left<lo || hi-lo<width)left=lo;
+    else if(left>hi-width)left=hi-width;
+    return left;
+}
+static void limit_shared_player(void) {
+    if(!mm4_coop_shared_camera())return;
+    /* The native source camera stays with its real player. Presentation
+     * follows the team, while native movement stops at the shared edges. */
+    int other=C.current^1,span=mm4_net_simulation_width(cyc_video_width())-48;
+    if(span<96)span=96;
+    int peer=mm4_coop_read(other,0x330)+256*mm4_coop_read(other,0x348);
+    int x=R(0x330)+256*R(0x348),clamped=x;
+    if(clamped<peer-span)clamped=peer-span;
+    if(clamped>peer+span)clamped=peer+span;
+    if(clamped!=x){P(0x330,clamped);P(0x348,clamped>>8);P(0x318,0);}
 }
 static void warp_follow(void) {
     int seat=C.anchor^1;Player *p=&C.player[seat];
@@ -327,6 +355,7 @@ static int private_step(int seat) {
             if(ok){r.x=0;ok=cyc_mod_call(0x873A,&r);}
         }
     } else if(ok)ok=cyc_mod_call(0x8000,&r);
+    if(ok)limit_shared_player();
     if(ok) {P(0xf5,0x3a);P(0xf6,0x3b);ok=cyc_mod_call(0xff37,&r);}
     s_personal_bhv=1;if(ok)ok=cyc_mod_call(0x8003,&r);s_personal_bhv=0;
     if(ok)ok=mm4_helpers_private_contact();
@@ -463,6 +492,7 @@ static int after_controller(uint16_t address) {
         if(timer && missing){timer--;P(0x13C,timer);P(0x13D,timer>>8);E.ticked=1;if(!timer && !s_on)effect_hooks();}
     }
     (void)address;if(s_on && C.initialized && !cyc_mod_isolated() && !C.menu) {
+        limit_shared_player();
         capture(&C.player[C.anchor]);C.updates[C.anchor]++;C.player[C.anchor].previous=C.raw[C.anchor];
         if(W.active){warp_follow();if(R(0x30)<8 && (W.active==2 || R(0x2A)!=W.source_room))W.active=0;}
     }return 0;

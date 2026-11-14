@@ -11,6 +11,8 @@ int mm4_coop_independent(void);
 int mm4_coop_view_mode(void);
 void mm4_coop_view_set(int mode);
 int mm4_coop_view_rects(int left[2]);
+int mm4_coop_shared_camera(void);
+int mm4_coop_shared_left(int fallback,int width,int lo,int hi);
 int mm4_coop_scene_locked(void);
 int mm4_coop_native_scene(void);
 int mm4_coop_source_pending(void);
